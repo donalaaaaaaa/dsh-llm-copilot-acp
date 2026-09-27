@@ -198,7 +198,7 @@ export class CopilotAcpAdapter extends LlmAdapter {
     options.signal?.addEventListener('abort', onAbort, { once: true });
     try {
       await client.initialize(undefined, options.signal);
-      const session = await client.newSession(options.cwd, undefined, options.signal);
+      const session = await client.newSession(undefined, undefined, options.signal);
       const applied = await client.setModel(session.sessionId, options.model, session);
       const promptOptions = applied || !options.model ? options : {
         ...options,
