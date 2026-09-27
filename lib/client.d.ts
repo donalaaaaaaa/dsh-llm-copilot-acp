@@ -17,6 +17,11 @@ export declare function isGhCopilotDeprecation(stderr: string): boolean;
 /** Resolve `rawPath` and reject anything outside `cwd`, including another drive. */
 export declare function resolveInsideCwd(cwd: string, rawPath: string): string;
 /**
+ * Resolve a file bridge path and verify the canonical path remains inside cwd.
+ * For writes to a new file, canonicalize the nearest existing parent directory.
+ */
+export declare function resolveInsideCwdCanonical(cwd: string, rawPath: string, mode: 'read' | 'write'): Promise<string>;
+/**
  * ACP permission outcomes are only `cancelled` or `selected` plus an option id
  * the agent actually offered. There is no `accepted` outcome.
  */
