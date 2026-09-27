@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { DshMessage, DshToolDeclaration, GenerateOptions } from './types.js';
+import type { DshMessage, DshToolDeclaration, GenerateOptions, ToolCallId } from './types.js';
 
 const PROMPT_PREAMBLE = [
   'You are being used as the active ACP agent backend for DeepSeek Harness.',
@@ -125,7 +125,7 @@ export function formatMessagesAsPrompt(options: GenerateOptions): string {
 }
 
 export interface ExtractedToolCall {
-  id: string;
+  id: ToolCallId;
   name: string;
   arguments: Record<string, any>;
   rawArguments: string;
@@ -148,7 +148,7 @@ export function extractToolCallsFromText(text: string): {
       const parsed = JSON.parse(rawJson);
       let name = '';
       let args: any = {};
-      let id = parsed.id || `call_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
+      const id = (parsed.id || `call_${randomUUID().replace(/-/g, '').slice(0, 16)}`) as ToolCallId;
 
       if (parsed.function && typeof parsed.function === 'object') {
         name = parsed.function.name || '';
