@@ -179,9 +179,9 @@ export class CopilotAcpAdapter extends LlmAdapter {
     try {
       for await (const chunk of queue) yield chunk;
     } finally {
-      client.close();
       queue.close();
       await task.catch(() => undefined);
+      await client.closeAndWait();
     }
   }
 
@@ -193,7 +193,6 @@ export class CopilotAcpAdapter extends LlmAdapter {
   ): Promise<void> {
     const onAbort = () => {
       client.cancel();
-      client.close();
     };
     options.signal?.addEventListener('abort', onAbort, { once: true });
     try {
