@@ -103,13 +103,13 @@ export function formatMessagesAsPrompt(options: GenerateOptions): string {
   const transcript: string[] = [];
   for (const message of options.messages || []) {
     if (!message || typeof message !== 'object') continue;
-    const role = (message.role || 'user').toLowerCase();
+    const role = message.role;
     const roleLabel = ROLE_LABELS[role] || 'Context';
-    let rendered = renderContent(message.content);
+    const rendered = renderContent(message.content);
 
-    if (role === 'tool') {
+    if (message.role === 'tool') {
       const toolId = message.toolCallId ? ` (call_id: ${message.toolCallId})` : '';
-      const prefix = message.isError ? `[Error] ` : '';
+      const prefix = message.isError ? '[Error] ' : '';
       transcript.push(`${roleLabel}${toolId}:\n${prefix}${rendered || '(no output)'}`);
     } else if (rendered) {
       transcript.push(`${roleLabel}:\n${rendered}`);
