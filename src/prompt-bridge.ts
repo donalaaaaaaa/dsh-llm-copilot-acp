@@ -4,7 +4,7 @@ import type { DshMessage, DshToolDeclaration, GenerateOptions } from './types.js
 const PROMPT_PREAMBLE = [
   'You are being used as the active ACP agent backend for DeepSeek Harness.',
   'Use ACP capabilities to complete tasks.',
-  'IMPORTANT: If you take an action with a tool, you MUST output tool calls using <tool_call>{"name": "...", "arguments": {...}}</tool_call> blocks with JSON matching standard tool call format.',
+  'IMPORTANT: Use <tool_call>{"name": "...", "arguments": {...}}</tool_call> only for tools listed in the DSH Available Tools section below. Copilot ACP native tools are executed by Copilot itself and MUST NOT be re-emitted as DSH tool calls.',
   'If no tool is needed, answer normally.',
 ];
 
