@@ -219,8 +219,10 @@ export class CopilotAcpClient {
         }
       }
     }
-    if (this.config.allowAllTools === true && !args.includes('--allow-all-tools')) {
-      args.push('--allow-all-tools');
+    if (this.config.allowAllTools === true) {
+      if (!args.includes('--allow-all-tools')) args.push('--allow-all-tools');
+    } else {
+      args = args.filter((arg) => arg !== '--allow-all-tools');
     }
     return args;
   }
@@ -631,7 +633,7 @@ export class CopilotAcpClient {
       const allowed = (modelOption.options || [])
         .map((o: any) => (typeof o === 'string' ? o : o.value))
         .filter(Boolean);
-      if (allowed.length > 0 && !allowed.includes(requestedModel)) return false;
+      if (!allowed.includes(requestedModel)) return false;
       await this.request('session/set_config_option', {
         sessionId,
         configId: modelOption.id || 'model',
@@ -640,7 +642,13 @@ export class CopilotAcpClient {
       return true;
     }
 
-    // Fallback: try legacy session/set_model
+    const legacyModels = sessionInfo?.models?.availableModels || [];
+    const legacyIds = legacyModels
+      .filter((entry: any) => entry?._meta?.copilotEnablement !== 'disabled' && entry?.enabled !== false)
+      .map((entry: any) => entry?.modelId || entry?.id)
+      .filter(Boolean);
+    if (!legacyIds.includes(requestedModel)) return false;
+
     try {
       await this.request('session/set_model', {
         sessionId,
@@ -648,7 +656,6 @@ export class CopilotAcpClient {
       });
       return true;
     } catch {
-      // If server does not support set_model or rejects it, continue with session default
       return false;
     }
   }
