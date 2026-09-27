@@ -270,7 +270,7 @@ test('CopilotAcpClient: file bridge keeps cwd isolated per session', async () =>
     assert.match(textB, /from-B/);
     assert.doesNotMatch(textB, /from-A/);
   } finally {
-    client.close();
+    await client.closeAndWait();
     await rm(rootA, { recursive: true, force: true });
     await rm(rootB, { recursive: true, force: true });
   }
@@ -302,7 +302,7 @@ test('CopilotAcpClient: file bridge supports ACP line ranges and writes', async 
     assert.match(writeStatus, /WRITE_OK/);
     assert.strictEqual(await readFile(join(root, 'test_write.txt'), 'utf8'), 'written by mock');
   } finally {
-    client.close();
+    await client.closeAndWait();
     await rm(root, { recursive: true, force: true });
   }
 });
