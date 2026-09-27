@@ -1,9 +1,11 @@
 import type {
+  ContentBlock,
   ContentBlockType,
   FinishReason,
   GenerateOptions as DshGenerateOptions,
   LlmResolvedModelInfo,
   ModelModality,
+  ReplayEnvelope,
   RequestMessage,
   StreamChunk,
   ToolCallId,
@@ -43,5 +45,6 @@ export type DshStreamChunk = StreamChunk;
 export type DshMessage = RequestMessage;
 export type DshToolDeclaration = ToolSchema;
 export type ModelDescriptor = LlmResolvedModelInfo;
+export type DshContentBlock = ContentBlock;
 export type StreamChunkBlockType = ContentBlockType;
-export type { FinishReason, ToolCallId };
+export type { FinishReason, ReplayEnvelope, ToolCallId };
