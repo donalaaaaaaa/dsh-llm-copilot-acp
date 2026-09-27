@@ -1,0 +1,12 @@
+- insert:
+    - id: github-copilot-acp
+      name: '@deepseek-ai/dsh-llm-copilot-acp'
+      config:
+        command: copilot
+        args:
+          - --acp
+          - --allow-all-tools
+        timeoutMs: 900000
+        modelDiscoveryTimeoutMs: 15000
+        allowAllTools: true
+        allowFileRequests: true
