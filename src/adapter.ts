@@ -146,17 +146,7 @@ export class CopilotAcpAdapter {
   }
 
   private defaultDisplayName(model: string): string {
-    const names: Record<string, string> = {
-      'auto': 'Copilot Auto (GPT-5.6 Luna)',
-      'gpt-5.6-luna': 'GPT-5.6 Luna (Copilot)',
-      'claude-sonnet-4.6': 'Claude Sonnet 4.6 (Copilot)',
-      'gpt-5.4': 'GPT-5.4 (Copilot)',
-      'gemini-3.8-flash': 'Gemini 3.8 Flash (Copilot)',
-      'o4-mini': 'OpenAI o4-mini (Copilot)',
-      'mai-code-1.1-flash': 'MAI-Code 1.1 Flash (Copilot)',
-      'gpt-6-luna': 'GPT-6 Luna (Copilot)',
-    };
-    return names[model] || model;
+    return model;
   }
 
   public async prepareCall(
