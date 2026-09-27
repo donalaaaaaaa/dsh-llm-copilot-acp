@@ -1,4 +1,5 @@
 import type {
+  DshContentBlock,
   DshStreamChunk,
   FinishReason,
   StreamChunkBlockType,
@@ -14,6 +15,7 @@ export class AcpStreamEmitter {
   private fullReasoningText = '';
   private messageParseBuffer = '';
   private insideToolCallTag = false;
+  private completedBlocks: DshContentBlock[] = [];
   private settled = false;
 
   /**
@@ -24,22 +26,26 @@ export class AcpStreamEmitter {
     if (!this.currentBlockType) return chunks;
 
     if (this.currentBlockType === 'text') {
+      const block: DshContentBlock = {
+        type: 'text',
+        text: this.currentBlockText,
+      };
+      this.completedBlocks.push(block);
       chunks.push({
         type: 'block-end',
         index: this.blockIndex,
-        block: {
-          type: 'text',
-          text: this.currentBlockText,
-        },
+        block,
       });
     } else if (this.currentBlockType === 'reasoning') {
+      const block: DshContentBlock = {
+        type: 'reasoning',
+        text: this.currentBlockText,
+      };
+      this.completedBlocks.push(block);
       chunks.push({
         type: 'block-end',
         index: this.blockIndex,
-        block: {
-          type: 'reasoning',
-          text: this.currentBlockText,
-        },
+        block,
       });
     }
 
@@ -173,6 +179,11 @@ export class AcpStreamEmitter {
     return chunks;
   }
 
+  /** Completed DSH blocks in emitted order. Valid after finish(). */
+  public blocks(): DshContentBlock[] {
+    return this.completedBlocks.map((block) => ({ ...block })) as DshContentBlock[];
+  }
+
   /**
    * Finalize the stream and produce finish chunk
    */
@@ -200,15 +211,17 @@ export class AcpStreamEmitter {
           name: tc.name,
           argumentsDelta: tc.rawArguments,
         });
+        const block: DshContentBlock = {
+          type: 'tool-call',
+          id: tc.id,
+          name: tc.name,
+          arguments: tc.rawArguments,
+        };
+        this.completedBlocks.push(block);
         chunks.push({
           type: 'block-end',
           index: this.blockIndex,
-          block: {
-            type: 'tool-call',
-            id: tc.id,
-            name: tc.name,
-            arguments: tc.rawArguments,
-          },
+          block,
         });
         this.blockIndex++;
       }
