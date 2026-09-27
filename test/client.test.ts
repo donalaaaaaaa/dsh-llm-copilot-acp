@@ -189,6 +189,7 @@ test('sliceAcpText follows ACP 1-based line and limit semantics', () => {
   const content = 'one\ntwo\nthree\nfour';
   assert.strictEqual(sliceAcpText(content), content);
   assert.strictEqual(sliceAcpText(content, 2, 2), 'two\nthree');
+  assert.strictEqual(sliceAcpText('one\r\ntwo\r\nthree', 2, 2), 'two\nthree');
   assert.strictEqual(sliceAcpText(content, 3, 0), '');
   assert.throws(() => sliceAcpText(content, 0, 1), /1-based positive integer/);
   assert.throws(() => sliceAcpText(content, 1, -1), /non-negative integer/);
