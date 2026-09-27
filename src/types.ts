@@ -17,8 +17,6 @@ export interface CopilotAcpConfig {
   allowAllTools?: boolean;
   /** Whether to allow local fs reads/writes requested by Copilot (defaults to false) */
   allowFileRequests?: boolean;
-  /** Specific model to pass to Copilot CLI (e.g. via --model) */
-  model?: string;
   /** Custom configured models list */
   models?: Array<{
     id: string;
