@@ -229,7 +229,13 @@ export class AcpStreamEmitter {
 
     let finishReason: FinishReason;
     if (signal?.aborted) {
-      finishReason = { kind: 'aborted' };
+      finishReason = {
+        kind: 'aborted',
+        failure: {
+          message: 'Copilot ACP request was aborted.',
+          code: 'ABORTED',
+        },
+      };
     } else if (error) {
       finishReason = {
         kind: 'error',
