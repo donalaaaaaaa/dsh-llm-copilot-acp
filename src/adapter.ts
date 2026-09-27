@@ -1,3 +1,4 @@
+import { LlmAdapter } from '@deepseek-ai/dsh-llm';
 import { CopilotAcpClient } from './client.js';
 import { formatMessagesAsPrompt } from './prompt-bridge.js';
 import { AcpStreamEmitter } from './stream-bridge.js';
@@ -79,10 +80,11 @@ class AsyncChunkQueue {
  * GitHub Copilot ACP Provider Adapter
  * Implements DeepSeek Harness LlmAdapter
  */
-export class CopilotAcpAdapter {
+export class CopilotAcpAdapter extends LlmAdapter {
   private config: CopilotAcpConfig;
 
   constructor(config: CopilotAcpConfig = {}) {
+    super();
     this.config = config;
   }
 
@@ -90,7 +92,7 @@ export class CopilotAcpAdapter {
     this.config = { ...this.config, ...newConfig };
   }
 
-  public providerInfo(provider: string): { id: string; name: string } {
+  public override providerInfo(provider: string): { id: string; name: string } {
     return {
       id: provider,
       name: 'GitHub Copilot (ACP)',
@@ -98,16 +100,16 @@ export class CopilotAcpAdapter {
   }
 
   /** `dsh-llm` calls this unconditionally while registering routes. */
-  public providerRetryPolicy(_provider: string): undefined {
+  public override providerRetryPolicy(_provider: string): undefined {
     return undefined;
   }
 
   /** `dsh-llm` calls this when pricing a route. This provider declares none. */
-  public imageRequestPricing(_provider: string, _model: string): undefined {
+  public override imageRequestPricing(_provider: string, _model: string): undefined {
     return undefined;
   }
 
-  public async listModels(provider: string, signal?: AbortSignal): Promise<ModelDescriptor[]> {
+  public override async listModels(provider: string, signal?: AbortSignal): Promise<ModelDescriptor[]> {
     if (signal?.aborted) throw new Error('ACP model discovery was aborted.');
     if (this.config.models && this.config.models.length > 0) {
       return this.config.models.map((model) => this.describe(provider, model.id));
@@ -124,7 +126,7 @@ export class CopilotAcpAdapter {
     }
   }
 
-  public resolveModel(
+  public override resolveModel(
     provider: string,
     model: string,
     signal?: AbortSignal
@@ -149,7 +151,7 @@ export class CopilotAcpAdapter {
     return model;
   }
 
-  public async prepareCall(
+  public override async prepareCall(
     provider: string,
     model: string,
     signal?: AbortSignal
@@ -164,7 +166,7 @@ export class CopilotAcpAdapter {
     };
   }
 
-  public async *stream(options: GenerateOptions): AsyncGenerator<DshStreamChunk, void, unknown> {
+  public override async *stream(options: GenerateOptions): AsyncGenerator<DshStreamChunk, void, unknown> {
     if (options.signal?.aborted) {
       yield* new AcpStreamEmitter().finish(options.signal);
       return;
