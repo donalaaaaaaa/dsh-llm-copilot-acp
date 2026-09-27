@@ -13,9 +13,9 @@ export interface CopilotAcpConfig {
   timeoutMs?: number;
   /** Timeout for model discovery in milliseconds (defaults to 10,000) */
   modelDiscoveryTimeoutMs?: number;
-  /** Pass --allow-all-tools or permit tool operations (defaults to true) */
+  /** Permit Copilot tool operations without interactive approval (defaults to false) */
   allowAllTools?: boolean;
-  /** Whether to allow local fs reads/writes requested by Copilot (defaults to true) */
+  /** Whether to allow local fs reads/writes requested by Copilot (defaults to false) */
   allowFileRequests?: boolean;
   /** Specific model to pass to Copilot CLI (e.g. via --model) */
   model?: string;
