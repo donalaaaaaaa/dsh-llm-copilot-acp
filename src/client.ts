@@ -580,7 +580,7 @@ export class CopilotAcpClient {
         clientInfo: {
           name: 'deepseek-harness',
           title: 'DeepSeek Harness',
-          version: '0.1.7',
+          version: '0.1.7-rc.3',
         },
       },
       timeoutMs,
