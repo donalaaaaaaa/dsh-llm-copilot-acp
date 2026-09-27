@@ -7,9 +7,8 @@ import { extractToolCallsFromText } from './prompt-bridge.js';
 
 export class AcpStreamEmitter {
   private blockIndex = 0;
-  private currentBlockType: StreamChunkBlockType | null = null;
+  private currentBlockType: Extract<StreamChunkBlockType, 'text' | 'reasoning'> | null = null;
   private currentBlockText = '';
-  private currentToolCall: { id: string; name: string; rawArgs: string } | null = null;
   private hasEmittedToolCall = false;
   private fullMessageText = '';
   private fullReasoningText = '';
@@ -42,18 +41,6 @@ export class AcpStreamEmitter {
           text: this.currentBlockText,
         },
       });
-    } else if (this.currentBlockType === 'tool-call' && this.currentToolCall) {
-      chunks.push({
-        type: 'block-end',
-        index: this.blockIndex,
-        block: {
-          type: 'tool-call',
-          id: this.currentToolCall.id,
-          name: this.currentToolCall.name,
-          arguments: this.currentToolCall.rawArgs,
-        },
-      });
-      this.currentToolCall = null;
     }
 
     this.currentBlockType = null;
