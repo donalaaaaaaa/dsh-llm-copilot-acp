@@ -804,7 +804,7 @@ export class CopilotAcpClient {
       }
       return [];
     } finally {
-      this.close();
+      await this.closeAndWait();
     }
   }
 
@@ -839,7 +839,8 @@ export class CopilotAcpClient {
   }
 
   /**
-   * Terminate child process and release resources
+   * Terminate child process and release resources.
+   * This starts shutdown immediately but does not wait for OS handles to close.
    */
   public close(): void {
     if (this.isClosed && !this.child) return;
@@ -860,5 +861,45 @@ export class CopilotAcpClient {
       terminateProcessTree(proc, true);
     }, 2000);
     (timer as any).unref?.();
+  }
+
+  /**
+   * Close the ACP process and wait until Node observes the child/stdio close.
+   * Use this when subsequent work depends on released cwd/file handles.
+   */
+  public async closeAndWait(timeoutMs: number = 3000): Promise<void> {
+    const proc = this.child;
+    if (!proc) {
+      this.close();
+      return;
+    }
+    if (proc.exitCode !== null) {
+      this.close();
+      return;
+    }
+
+    let settled = false;
+    let forceTimer: NodeJS.Timeout | null = null;
+    let finalTimer: NodeJS.Timeout | null = null;
+    const waitForClose = new Promise<void>((resolvePromise) => {
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        if (forceTimer) clearTimeout(forceTimer);
+        if (finalTimer) clearTimeout(finalTimer);
+        proc.removeListener('close', done);
+        resolvePromise();
+      };
+      proc.once('close', done);
+      forceTimer = setTimeout(() => {
+        terminateProcessTree(proc, true);
+      }, Math.max(1, timeoutMs));
+      finalTimer = setTimeout(done, Math.max(1, timeoutMs) + 1000);
+      (forceTimer as any).unref?.();
+      (finalTimer as any).unref?.();
+    });
+
+    this.close();
+    await waitForClose;
   }
 }
