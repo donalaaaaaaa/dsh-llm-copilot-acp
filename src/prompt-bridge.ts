@@ -85,23 +85,9 @@ export function renderContent(content: any): string {
   return String(content).trim();
 }
 
-/**
- * Format full conversation messages and tools into an ACP prompt
- */
-export function formatMessagesAsPrompt(options: GenerateOptions): string {
-  const sections: string[] = [...PROMPT_PREAMBLE];
-
-  if (options.system && options.system.trim()) {
-    sections.push(`System Instructions:\n${options.system.trim()}`);
-  }
-
-  const toolSections = renderToolBridge(options.tools);
-  if (toolSections.length > 0) {
-    sections.push(...toolSections);
-  }
-
+function renderTranscript(messages: readonly DshMessage[]): string {
   const transcript: string[] = [];
-  for (const message of options.messages || []) {
+  for (const message of messages) {
     if (!message || typeof message !== 'object') continue;
     const role = message.role;
     const roleLabel = ROLE_LABELS[role] || 'Context';
@@ -115,13 +101,46 @@ export function formatMessagesAsPrompt(options: GenerateOptions): string {
       transcript.push(`${roleLabel}:\n${rendered}`);
     }
   }
+  return transcript.join('\n\n');
+}
 
-  if (transcript.length > 0) {
-    sections.push('Conversation transcript:\n\n' + transcript.join('\n\n'));
+/**
+ * Format full conversation messages and tools into an ACP prompt.
+ */
+export function formatMessagesAsPrompt(options: GenerateOptions): string {
+  const sections: string[] = [...PROMPT_PREAMBLE];
+
+  if (options.system && options.system.trim()) {
+    sections.push(`System Instructions:\n${options.system.trim()}`);
+  }
+
+  const toolSections = renderToolBridge(options.tools);
+  if (toolSections.length > 0) {
+    sections.push(...toolSections);
+  }
+
+  const transcript = renderTranscript(options.messages || []);
+  if (transcript) {
+    sections.push('Conversation transcript:\n\n' + transcript);
   }
 
   sections.push('Continue the conversation from the latest user request.');
-  return sections.filter((s) => s && s.trim().length > 0).join('\n\n');
+  return sections.filter((section) => section && section.trim().length > 0).join('\n\n');
+}
+
+/**
+ * Format only the messages added after a verified replay anchor.
+ * The loaded ACP session already contains the preamble, system, tools and
+ * historical prefix, so repeating them would change model-visible context.
+ */
+export function formatMessagesAsContinuation(messages: readonly DshMessage[]): string {
+  const transcript = renderTranscript(messages);
+  if (!transcript) return '';
+  return [
+    'Conversation continuation:',
+    transcript,
+    'Continue the conversation from the latest user request.',
+  ].join('\n\n');
 }
 
 export interface ExtractedToolCall {
