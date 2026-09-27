@@ -115,7 +115,7 @@ export class CopilotAcpAdapter {
 
     try {
       const client = new CopilotAcpClient(this.config);
-      const timeout = this.config.modelDiscoveryTimeoutMs ?? 15000;
+      const timeout = this.config.modelDiscoveryTimeoutMs ?? 10000;
       const discovered = await client.listModels(timeout, signal);
       return discovered.map((id) => this.describe(provider, id));
     } catch (err) {
@@ -170,10 +170,7 @@ export class CopilotAcpAdapter {
       return;
     }
 
-    const client = new CopilotAcpClient({
-      ...this.config,
-      ...(options.model ? { model: options.model } : {}),
-    });
+    const client = new CopilotAcpClient(this.config);
     const emitter = new AcpStreamEmitter();
     const queue = new AsyncChunkQueue();
     const task = this.runPrompt(client, emitter, queue, options);
