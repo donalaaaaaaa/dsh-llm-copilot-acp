@@ -214,7 +214,7 @@ export class CopilotAcpClient {
         args = envArgs.split(/\s+/);
       } else {
         args = ['--acp'];
-        if (this.config.allowAllTools !== false) {
+        if (this.config.allowAllTools === true) {
           args.push('--allow-all-tools');
         }
       }
@@ -428,12 +428,12 @@ export class CopilotAcpClient {
     };
 
     if (method === 'session/request_permission') {
-      respondResult(permissionOutcome(params, this.config.allowAllTools !== false));
+      respondResult(permissionOutcome(params, this.config.allowAllTools === true));
       return;
     }
 
     if (method === 'fs/read_text_file') {
-      if (this.config.allowFileRequests === false) {
+      if (this.config.allowFileRequests !== true) {
         respondError(-32601, 'File read access is disabled.');
         return;
       }
@@ -448,7 +448,7 @@ export class CopilotAcpClient {
     }
 
     if (method === 'fs/write_text_file') {
-      if (this.config.allowFileRequests === false) {
+      if (this.config.allowFileRequests !== true) {
         respondError(-32601, 'File write access is disabled.');
         return;
       }
