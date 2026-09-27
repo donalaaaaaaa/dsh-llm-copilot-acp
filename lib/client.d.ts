@@ -107,7 +107,13 @@ export declare class CopilotAcpClient {
     listModels(timeoutMs?: number, signal?: AbortSignal): Promise<string[]>;
     extractModelsFromSession(session: AcpSessionInfo): string[];
     /**
-     * Terminate child process and release resources
+     * Terminate child process and release resources.
+     * This starts shutdown immediately but does not wait for OS handles to close.
      */
     close(): void;
+    /**
+     * Close the ACP process and wait until Node observes the child/stdio close.
+     * Use this when subsequent work depends on released cwd/file handles.
+     */
+    closeAndWait(timeoutMs?: number): Promise<void>;
 }
