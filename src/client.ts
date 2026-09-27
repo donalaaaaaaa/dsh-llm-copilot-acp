@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { existsSync } from 'node:fs';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, realpath, lstat } from 'node:fs/promises';
 import type { CopilotAcpConfig } from './types.js';
 
 export interface AcpSessionInfo {
@@ -40,6 +40,60 @@ export function resolveInsideCwd(cwd: string, rawPath: string): string {
     throw new Error(`Access denied: path '${target}' is outside session cwd '${root}'.`);
   }
   return target;
+}
+
+async function assertNoSymlinkTraversal(root: string, target: string): Promise<void> {
+  const rel = relative(root, target);
+  if (!rel) return;
+  const parts = rel.split(sep).filter(Boolean);
+  let current = root;
+  for (const part of parts) {
+    current = join(current, part);
+    try {
+      const stat = await lstat(current);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`Access denied: path '${target}' traverses symbolic link '${current}'.`);
+      }
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') return;
+      throw err;
+    }
+  }
+}
+
+/**
+ * Resolve a file bridge path and verify the canonical path remains inside cwd.
+ * For writes to a new file, canonicalize the nearest existing parent directory.
+ */
+export async function resolveInsideCwdCanonical(
+  cwd: string,
+  rawPath: string,
+  mode: 'read' | 'write'
+): Promise<string> {
+  const lexicalTarget = resolveInsideCwd(cwd, rawPath);
+  const lexicalRoot = resolve(cwd);
+  const canonicalRoot = await realpath(lexicalRoot);
+  await assertNoSymlinkTraversal(lexicalRoot, lexicalTarget);
+
+  if (mode === 'read') {
+    const canonicalTarget = await realpath(lexicalTarget);
+    resolveInsideCwd(canonicalRoot, canonicalTarget);
+    return canonicalTarget;
+  }
+
+  let probe = dirname(lexicalTarget);
+  while (true) {
+    try {
+      const canonicalParent = await realpath(probe);
+      resolveInsideCwd(canonicalRoot, canonicalParent);
+      return lexicalTarget;
+    } catch (err: any) {
+      if (err?.code !== 'ENOENT') throw err;
+      const parent = dirname(probe);
+      if (parent === probe) throw err;
+      probe = parent;
+    }
+  }
 }
 
 /**
@@ -165,8 +219,8 @@ export class CopilotAcpClient {
         }
       }
     }
-    if (this.config.model && !args.includes('--model')) {
-      args.push('--model', this.config.model);
+    if (this.config.allowAllTools === true && !args.includes('--allow-all-tools')) {
+      args.push('--allow-all-tools');
     }
     return args;
   }
@@ -384,7 +438,7 @@ export class CopilotAcpClient {
         return;
       }
       try {
-        const filePath = resolveInsideCwd(this.sessionCwd, String(params?.path || ''));
+        const filePath = await resolveInsideCwdCanonical(this.sessionCwd, String(params?.path || ''), 'read');
         const content = await readFile(filePath, 'utf8');
         respondResult({ content });
       } catch (err: any) {
@@ -399,7 +453,7 @@ export class CopilotAcpClient {
         return;
       }
       try {
-        const filePath = resolveInsideCwd(this.sessionCwd, String(params?.path || ''));
+        const filePath = await resolveInsideCwdCanonical(this.sessionCwd, String(params?.path || ''), 'write');
         await mkdir(dirname(filePath), { recursive: true });
         await writeFile(filePath, String(params?.content || ''), 'utf8');
         respondResult(null);
@@ -435,8 +489,11 @@ export class CopilotAcpClient {
     return new Promise<T>((resolvePromise, rejectPromise) => {
       let timer: NodeJS.Timeout | null = null;
 
+      let abortHandler: (() => void) | null = null;
       const cleanup = () => {
         if (timer) clearTimeout(timer);
+        if (signal && abortHandler) signal.removeEventListener('abort', abortHandler);
+        abortHandler = null;
         this.pendingRequests.delete(id);
       };
 
@@ -460,14 +517,11 @@ export class CopilotAcpClient {
           rejectPromise(new Error(`ACP request '${method}' was aborted.`));
           return;
         }
-        signal.addEventListener(
-          'abort',
-          () => {
-            cleanup();
-            rejectPromise(new Error(`ACP request '${method}' was aborted.`));
-          },
-          { once: true }
-        );
+        abortHandler = () => {
+          cleanup();
+          rejectPromise(new Error(`ACP request '${method}' was aborted.`));
+        };
+        signal.addEventListener('abort', abortHandler, { once: true });
       }
 
       this.pendingRequests.set(id, {
@@ -517,7 +571,9 @@ export class CopilotAcpClient {
       {
         protocolVersion: 1,
         clientCapabilities: {
-          fs: { readTextFile: true, writeTextFile: true },
+          ...(this.config.allowFileRequests === true
+            ? { fs: { readTextFile: true, writeTextFile: true } }
+            : {}),
         },
         clientInfo: {
           name: 'deepseek-harness',
@@ -652,18 +708,7 @@ export class CopilotAcpClient {
       if (discovered.length > 0) {
         return discovered;
       }
-      // If Copilot session connected successfully but did not advertise model choices in configOptions,
-      // return Copilot supported models (2026 active models).
-      return [
-        'auto',
-        'gpt-5.6-luna',
-        'claude-sonnet-4.6',
-        'gpt-5.4',
-        'gemini-3.8-flash',
-        'o4-mini',
-        'mai-code-1.1-flash',
-        'gpt-6-luna',
-      ];
+      return [];
     } finally {
       this.close();
     }
@@ -720,7 +765,7 @@ export class CopilotAcpClient {
 
     const timer = setTimeout(() => {
       try {
-        if (proc.exitCode === null && !proc.killed) {
+        if (proc.exitCode === null) {
           proc.kill('SIGKILL');
         }
       } catch {
