@@ -115,7 +115,7 @@ export function sliceAcpText(content: string, line?: number | null, limit?: numb
   if (limit !== undefined && limit !== null && (!Number.isInteger(limit) || limit < 0)) {
     throw new Error('ACP read limit must be a non-negative integer.');
   }
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   const start = (line ?? 1) - 1;
   const end = limit === undefined || limit === null ? undefined : start + limit;
   return lines.slice(start, end).join('\n');
@@ -646,7 +646,7 @@ export class CopilotAcpClient {
         clientInfo: {
           name: 'deepseek-harness',
           title: 'DeepSeek Harness',
-          version: '0.1.7-rc.3',
+          version: '0.1.7-rc.4',
         },
       },
       timeoutMs,
