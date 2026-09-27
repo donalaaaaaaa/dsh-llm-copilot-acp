@@ -1,8 +1,8 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { existsSync } from 'node:fs';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, realpath, lstat } from 'node:fs/promises';
 import type { CopilotAcpConfig } from './types.js';
 
 export interface AcpSessionInfo {
@@ -42,6 +42,109 @@ export function resolveInsideCwd(cwd: string, rawPath: string): string {
   return target;
 }
 
+async function assertNoSymlinkTraversal(root: string, target: string): Promise<void> {
+  const rel = relative(root, target);
+  if (!rel) return;
+  const parts = rel.split(sep).filter(Boolean);
+  let current = root;
+  for (const part of parts) {
+    current = join(current, part);
+    try {
+      const stat = await lstat(current);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`Access denied: path '${target}' traverses symbolic link '${current}'.`);
+      }
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') return;
+      throw err;
+    }
+  }
+}
+
+/**
+ * Resolve a file bridge path and verify the canonical path remains inside cwd.
+ * For writes to a new file, canonicalize the nearest existing parent directory.
+ */
+export async function resolveInsideCwdCanonical(
+  cwd: string,
+  rawPath: string,
+  mode: 'read' | 'write'
+): Promise<string> {
+  const lexicalTarget = resolveInsideCwd(cwd, rawPath);
+  const lexicalRoot = resolve(cwd);
+  const canonicalRoot = await realpath(lexicalRoot);
+  await assertNoSymlinkTraversal(lexicalRoot, lexicalTarget);
+
+  if (mode === 'read') {
+    const canonicalTarget = await realpath(lexicalTarget);
+    resolveInsideCwd(canonicalRoot, canonicalTarget);
+    return canonicalTarget;
+  }
+
+  let probe = dirname(lexicalTarget);
+  while (true) {
+    try {
+      const canonicalParent = await realpath(probe);
+      resolveInsideCwd(canonicalRoot, canonicalParent);
+      return lexicalTarget;
+    } catch (err: any) {
+      if (err?.code !== 'ENOENT') throw err;
+      const parent = dirname(probe);
+      if (parent === probe) throw err;
+      probe = parent;
+    }
+  }
+}
+
+export async function resolveAcpFilePath(
+  cwd: string,
+  rawPath: string,
+  mode: 'read' | 'write'
+): Promise<string> {
+  if (!isAbsolute(rawPath)) {
+    throw new Error(`ACP file path '${rawPath}' must be absolute.`);
+  }
+  return resolveInsideCwdCanonical(cwd, rawPath, mode);
+}
+
+export function sliceAcpText(content: string, line?: number | null, limit?: number | null): string {
+  if (line === undefined && limit === undefined) return content;
+  if (line !== undefined && line !== null && (!Number.isInteger(line) || line < 1)) {
+    throw new Error('ACP read line must be a 1-based positive integer.');
+  }
+  if (limit !== undefined && limit !== null && (!Number.isInteger(limit) || limit < 0)) {
+    throw new Error('ACP read limit must be a non-negative integer.');
+  }
+  const lines = content.split(/\r?\n/);
+  const start = (line ?? 1) - 1;
+  const end = limit === undefined || limit === null ? undefined : start + limit;
+  return lines.slice(start, end).join('\n');
+}
+
+export function windowsTaskkillArgs(pid: number, force: boolean): string[] {
+  return ['/PID', String(pid), '/T', ...(force ? ['/F'] : [])];
+}
+
+function terminateProcessTree(proc: ChildProcess, force: boolean): void {
+  if (proc.exitCode !== null) return;
+  if (process.platform === 'win32' && proc.pid) {
+    try {
+      const result = spawnSync('taskkill', windowsTaskkillArgs(proc.pid, force), {
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+      if (!result.error && result.status === 0) return;
+    } catch {
+      // Fall through to ChildProcess.kill().
+    }
+  }
+  try {
+    proc.kill(force ? 'SIGKILL' : 'SIGTERM');
+  } catch {
+    // The process is already gone.
+  }
+}
+
 /**
  * ACP permission outcomes are only `cancelled` or `selected` plus an option id
  * the agent actually offered. There is no `accepted` outcome.
@@ -74,7 +177,9 @@ export class CopilotAcpClient {
     }
   >();
   private stderrTail: string[] = [];
-  private activeUpdateHandler: ((update: any) => void) | null = null;
+  private updateHandlers = new Map<string, (update: any) => void>();
+  private sessionCwds = new Map<string, string>();
+  private initializeResult: any = null;
   private isClosed = false;
   private childFailed = false;
   private generation = 0;
@@ -160,13 +265,15 @@ export class CopilotAcpClient {
         args = envArgs.split(/\s+/);
       } else {
         args = ['--acp'];
-        if (this.config.allowAllTools !== false) {
+        if (this.config.allowAllTools === true) {
           args.push('--allow-all-tools');
         }
       }
     }
-    if (this.config.model && !args.includes('--model')) {
-      args.push('--model', this.config.model);
+    if (this.config.allowAllTools === true) {
+      if (!args.includes('--allow-all-tools')) args.push('--allow-all-tools');
+    } else {
+      args = args.filter((arg) => arg !== '--allow-all-tools');
     }
     return args;
   }
@@ -338,9 +445,11 @@ export class CopilotAcpClient {
     // Server-initiated notification
     if (msg.method === 'session/update') {
       const update = msg.params?.update;
-      if (this.activeUpdateHandler) {
+      const sessionId = typeof msg.params?.sessionId === 'string' ? msg.params.sessionId : '';
+      const handler = sessionId ? this.updateHandlers.get(sessionId) : undefined;
+      if (handler) {
         try {
-          this.activeUpdateHandler(update);
+          handler(update);
         } catch {
           // Update handler error shouldn't crash client
         }
@@ -374,19 +483,22 @@ export class CopilotAcpClient {
     };
 
     if (method === 'session/request_permission') {
-      respondResult(permissionOutcome(params, this.config.allowAllTools !== false));
+      respondResult(permissionOutcome(params, this.config.allowAllTools === true));
       return;
     }
 
     if (method === 'fs/read_text_file') {
-      if (this.config.allowFileRequests === false) {
+      if (this.config.allowFileRequests !== true) {
         respondError(-32601, 'File read access is disabled.');
         return;
       }
       try {
-        const filePath = resolveInsideCwd(this.sessionCwd, String(params?.path || ''));
+        const sessionId = String(params?.sessionId || '');
+        const root = this.sessionCwds.get(sessionId);
+        if (!root) throw new Error(`Unknown ACP session '${sessionId}'.`);
+        const filePath = await resolveAcpFilePath(root, String(params?.path || ''), 'read');
         const content = await readFile(filePath, 'utf8');
-        respondResult({ content });
+        respondResult({ content: sliceAcpText(content, params?.line, params?.limit) });
       } catch (err: any) {
         respondError(-32602, `Failed to read file: ${err.message}`);
       }
@@ -394,14 +506,16 @@ export class CopilotAcpClient {
     }
 
     if (method === 'fs/write_text_file') {
-      if (this.config.allowFileRequests === false) {
+      if (this.config.allowFileRequests !== true) {
         respondError(-32601, 'File write access is disabled.');
         return;
       }
       try {
-        const filePath = resolveInsideCwd(this.sessionCwd, String(params?.path || ''));
-        await mkdir(dirname(filePath), { recursive: true });
-        await writeFile(filePath, String(params?.content || ''), 'utf8');
+        const sessionId = String(params?.sessionId || '');
+        const root = this.sessionCwds.get(sessionId);
+        if (!root) throw new Error(`Unknown ACP session '${sessionId}'.`);
+        const filePath = await resolveAcpFilePath(root, String(params?.path || ''), 'write');
+        await writeFile(filePath, String(params?.content ?? ''), 'utf8');
         respondResult(null);
       } catch (err: any) {
         respondError(-32602, `Failed to write file: ${err.message}`);
@@ -435,8 +549,11 @@ export class CopilotAcpClient {
     return new Promise<T>((resolvePromise, rejectPromise) => {
       let timer: NodeJS.Timeout | null = null;
 
+      let abortHandler: (() => void) | null = null;
       const cleanup = () => {
         if (timer) clearTimeout(timer);
+        if (signal && abortHandler) signal.removeEventListener('abort', abortHandler);
+        abortHandler = null;
         this.pendingRequests.delete(id);
       };
 
@@ -460,14 +577,11 @@ export class CopilotAcpClient {
           rejectPromise(new Error(`ACP request '${method}' was aborted.`));
           return;
         }
-        signal.addEventListener(
-          'abort',
-          () => {
-            cleanup();
-            rejectPromise(new Error(`ACP request '${method}' was aborted.`));
-          },
-          { once: true }
-        );
+        abortHandler = () => {
+          cleanup();
+          rejectPromise(new Error(`ACP request '${method}' was aborted.`));
+        };
+        signal.addEventListener('abort', abortHandler, { once: true });
       }
 
       this.pendingRequests.set(id, {
@@ -512,22 +626,26 @@ export class CopilotAcpClient {
    * ACP initialize handshake
    */
   public async initialize(timeoutMs?: number, signal?: AbortSignal): Promise<any> {
-    return this.request(
+    const result = await this.request(
       'initialize',
       {
         protocolVersion: 1,
         clientCapabilities: {
-          fs: { readTextFile: true, writeTextFile: true },
+          ...(this.config.allowFileRequests === true
+            ? { fs: { readTextFile: true, writeTextFile: true } }
+            : {}),
         },
         clientInfo: {
           name: 'deepseek-harness',
           title: 'DeepSeek Harness',
-          version: '0.1.7',
+          version: '0.1.7-rc.4',
         },
       },
       timeoutMs,
       signal
     );
+    this.initializeResult = result;
+    return result;
   }
 
   /**
@@ -535,7 +653,6 @@ export class CopilotAcpClient {
    */
   public async newSession(cwd?: string, timeoutMs?: number, signal?: AbortSignal): Promise<AcpSessionInfo> {
     const sessionCwd = cwd ? resolve(cwd) : this.sessionCwd;
-    this.sessionCwd = sessionCwd;
     const res = await this.request(
       'session/new',
       {
@@ -549,7 +666,35 @@ export class CopilotAcpClient {
       throw new Error('Copilot ACP did not return a sessionId from session/new.');
     }
     this.activeSessionId = String(res.sessionId);
+    this.sessionCwds.set(this.activeSessionId, sessionCwd);
     return res;
+  }
+
+  public async loadSession(
+    sessionId: string,
+    cwd?: string,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+    onUpdate?: (update: any) => void
+  ): Promise<AcpSessionInfo> {
+    if (this.initializeResult?.agentCapabilities?.loadSession !== true) {
+      throw new Error('Copilot ACP agent did not advertise loadSession capability.');
+    }
+    const sessionCwd = cwd ? resolve(cwd) : this.sessionCwd;
+    if (onUpdate) this.updateHandlers.set(sessionId, onUpdate);
+    try {
+      const result = await this.request(
+        'session/load',
+        { sessionId, cwd: sessionCwd, mcpServers: [] },
+        timeoutMs,
+        signal
+      );
+      this.activeSessionId = sessionId;
+      this.sessionCwds.set(sessionId, sessionCwd);
+      return { sessionId, ...(result || {}) };
+    } finally {
+      if (onUpdate) this.updateHandlers.delete(sessionId);
+    }
   }
 
   /**
@@ -575,7 +720,7 @@ export class CopilotAcpClient {
       const allowed = (modelOption.options || [])
         .map((o: any) => (typeof o === 'string' ? o : o.value))
         .filter(Boolean);
-      if (allowed.length > 0 && !allowed.includes(requestedModel)) return false;
+      if (!allowed.includes(requestedModel)) return false;
       await this.request('session/set_config_option', {
         sessionId,
         configId: modelOption.id || 'model',
@@ -584,7 +729,13 @@ export class CopilotAcpClient {
       return true;
     }
 
-    // Fallback: try legacy session/set_model
+    const legacyModels = sessionInfo?.models?.availableModels || [];
+    const legacyIds = legacyModels
+      .filter((entry: any) => entry?._meta?.copilotEnablement !== 'disabled' && entry?.enabled !== false)
+      .map((entry: any) => entry?.modelId || entry?.id)
+      .filter(Boolean);
+    if (!legacyIds.includes(requestedModel)) return false;
+
     try {
       await this.request('session/set_model', {
         sessionId,
@@ -592,7 +743,6 @@ export class CopilotAcpClient {
       });
       return true;
     } catch {
-      // If server does not support set_model or rejects it, continue with session default
       return false;
     }
   }
@@ -606,7 +756,7 @@ export class CopilotAcpClient {
     onUpdate: (update: any) => void,
     signal?: AbortSignal
   ): Promise<any> {
-    this.activeUpdateHandler = onUpdate;
+    this.updateHandlers.set(sessionId, onUpdate);
     try {
       const res = await this.request(
         'session/prompt',
@@ -619,7 +769,7 @@ export class CopilotAcpClient {
       );
       return res;
     } finally {
-      this.activeUpdateHandler = null;
+      this.updateHandlers.delete(sessionId);
     }
   }
 
@@ -652,20 +802,9 @@ export class CopilotAcpClient {
       if (discovered.length > 0) {
         return discovered;
       }
-      // If Copilot session connected successfully but did not advertise model choices in configOptions,
-      // return Copilot supported models (2026 active models).
-      return [
-        'auto',
-        'gpt-5.6-luna',
-        'claude-sonnet-4.6',
-        'gpt-5.4',
-        'gemini-3.8-flash',
-        'o4-mini',
-        'mai-code-1.1-flash',
-        'gpt-6-luna',
-      ];
+      return [];
     } finally {
-      this.close();
+      await this.closeAndWait();
     }
   }
 
@@ -700,7 +839,8 @@ export class CopilotAcpClient {
   }
 
   /**
-   * Terminate child process and release resources
+   * Terminate child process and release resources.
+   * This starts shutdown immediately but does not wait for OS handles to close.
    */
   public close(): void {
     if (this.isClosed && !this.child) return;
@@ -708,25 +848,58 @@ export class CopilotAcpClient {
     this.isClosed = true;
     this.generation += 1;
     this.activeSessionId = null;
+    this.updateHandlers.clear();
+    this.sessionCwds.clear();
+    this.initializeResult = null;
     const proc = this.child;
     this.child = null;
     this.failAllPending(new Error('Copilot ACP process closed.'));
     if (!proc) return;
-    try {
-      proc.kill();
-    } catch {
-      // ignore
-    }
+    terminateProcessTree(proc, false);
 
     const timer = setTimeout(() => {
-      try {
-        if (proc.exitCode === null && !proc.killed) {
-          proc.kill('SIGKILL');
-        }
-      } catch {
-        // ignore
-      }
+      terminateProcessTree(proc, true);
     }, 2000);
     (timer as any).unref?.();
+  }
+
+  /**
+   * Close the ACP process and wait until Node observes the child/stdio close.
+   * Use this when subsequent work depends on released cwd/file handles.
+   */
+  public async closeAndWait(timeoutMs: number = 3000): Promise<void> {
+    const proc = this.child;
+    if (!proc) {
+      this.close();
+      return;
+    }
+    if (proc.exitCode !== null) {
+      this.close();
+      return;
+    }
+
+    let settled = false;
+    let forceTimer: NodeJS.Timeout | null = null;
+    let finalTimer: NodeJS.Timeout | null = null;
+    const waitForClose = new Promise<void>((resolvePromise) => {
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        if (forceTimer) clearTimeout(forceTimer);
+        if (finalTimer) clearTimeout(finalTimer);
+        proc.removeListener('close', done);
+        resolvePromise();
+      };
+      proc.once('close', done);
+      forceTimer = setTimeout(() => {
+        terminateProcessTree(proc, true);
+      }, Math.max(1, timeoutMs));
+      finalTimer = setTimeout(done, Math.max(1, timeoutMs) + 1000);
+      (forceTimer as any).unref?.();
+      (finalTimer as any).unref?.();
+    });
+
+    this.close();
+    await waitForClose;
   }
 }

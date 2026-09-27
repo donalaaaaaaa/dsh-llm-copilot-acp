@@ -1,4 +1,5 @@
 import { createInterface } from 'node:readline';
+import { resolve } from 'node:path';
 
 const rl = createInterface({
   input: process.stdin,
@@ -10,6 +11,8 @@ function send(msg: any) {
 }
 
 let pendingResponses = new Map<number, (val: any) => void>();
+let sessionCounter = 0;
+const sessionCwds = new Map<string, string>();
 
 rl.on('line', async (line) => {
   const trimmed = line.trim();
@@ -53,18 +56,22 @@ rl.on('line', async (line) => {
         result: {
           protocolVersion: 1,
           capabilities: { models: true },
+          agentCapabilities: { loadSession: true },
           echoedPermission: permission?.result ?? null,
+          echoedClientCapabilities: params?.clientCapabilities ?? null,
         },
       });
       return;
     }
 
     if (method === 'session/new') {
+      const sessionId = `sess_mock_${String(++sessionCounter).padStart(3, '0')}`;
+      sessionCwds.set(sessionId, params?.cwd || process.cwd());
       send({
         jsonrpc: '2.0',
         id,
         result: {
-          sessionId: 'sess_mock_001',
+          sessionId,
           configOptions: [
             {
               id: 'model',
@@ -81,6 +88,24 @@ rl.on('line', async (line) => {
       return;
     }
 
+    if (method === 'session/load') {
+      const sessionId = String(params?.sessionId || '');
+      sessionCwds.set(sessionId, params?.cwd || process.cwd());
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'replayed history' },
+          },
+        },
+      });
+      send({ jsonrpc: '2.0', id, result: {} });
+      return;
+    }
+
     if (method === 'session/set_config_option' || method === 'session/set_model') {
       send({
         jsonrpc: '2.0',
@@ -94,17 +119,21 @@ rl.on('line', async (line) => {
       const promptText = params?.prompt?.[0]?.text || '';
 
       if (promptText.includes('trigger_read_file')) {
-        // Send a request to client to read a file
         const reqId = 9999;
         const readPromise = new Promise((resolve) => {
           pendingResponses.set(reqId, resolve);
         });
-
+        const sessionId = String(params?.sessionId || '');
+        const cwd = sessionCwds.get(sessionId) || process.cwd();
         send({
           jsonrpc: '2.0',
           id: reqId,
           method: 'fs/read_text_file',
-          params: { path: 'test_read.txt' },
+          params: {
+            sessionId,
+            path: resolve(cwd, 'test_read.txt'),
+            ...(promptText.includes('trigger_read_file_slice') ? { line: 2, limit: 2 } : {}),
+          },
         });
 
         const res: any = await readPromise;
@@ -114,6 +143,7 @@ rl.on('line', async (line) => {
           jsonrpc: '2.0',
           method: 'session/update',
           params: {
+            sessionId: String(params?.sessionId || ''),
             update: {
               sessionUpdate: 'agent_message_chunk',
               content: { type: 'text', text: `Read file: ${fileContent}` },
@@ -130,11 +160,13 @@ rl.on('line', async (line) => {
         const readPromise = new Promise((resolve) => {
           pendingResponses.set(reqId, resolve);
         });
+        const sessionId = String(params?.sessionId || '');
+        const cwd = sessionCwds.get(sessionId) || process.cwd();
         send({
           jsonrpc: '2.0',
           id: reqId,
           method: 'fs/read_text_file',
-          params: { path: 'D:\\outside-copilot-acp\\secret.txt' },
+          params: { sessionId, path: resolve(cwd, '..', 'outside-copilot-acp-secret.txt') },
         });
         const res: any = await readPromise;
         const text = res?.error ? `READ_DENIED ${res.error.message}` : 'READ_ALLOWED';
@@ -142,6 +174,65 @@ rl.on('line', async (line) => {
           jsonrpc: '2.0',
           method: 'session/update',
           params: {
+            sessionId: String(params?.sessionId || ''),
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text },
+            },
+          },
+        });
+        send({ jsonrpc: '2.0', id, result: {} });
+        return;
+      }
+
+      if (promptText.includes('trigger_read_relative')) {
+        const reqId = 4343;
+        const readPromise = new Promise((resolve) => pendingResponses.set(reqId, resolve));
+        send({
+          jsonrpc: '2.0',
+          id: reqId,
+          method: 'fs/read_text_file',
+          params: { sessionId: String(params?.sessionId || ''), path: 'relative.txt' },
+        });
+        const res: any = await readPromise;
+        const text = res?.error ? `RELATIVE_DENIED ${res.error.message}` : 'RELATIVE_ALLOWED';
+        send({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId: String(params?.sessionId || ''),
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text },
+            },
+          },
+        });
+        send({ jsonrpc: '2.0', id, result: {} });
+        return;
+      }
+
+      if (promptText.includes('trigger_write_file')) {
+        const reqId = 5151;
+        const writePromise = new Promise((resolve) => pendingResponses.set(reqId, resolve));
+        const sessionId = String(params?.sessionId || '');
+        const cwd = sessionCwds.get(sessionId) || process.cwd();
+        send({
+          jsonrpc: '2.0',
+          id: reqId,
+          method: 'fs/write_text_file',
+          params: {
+            sessionId,
+            path: resolve(cwd, 'test_write.txt'),
+            content: 'written by mock',
+          },
+        });
+        const res: any = await writePromise;
+        const text = res?.error ? `WRITE_DENIED ${res.error.message}` : 'WRITE_OK';
+        send({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
               content: { type: 'text', text },
@@ -157,6 +248,7 @@ rl.on('line', async (line) => {
           jsonrpc: '2.0',
           method: 'session/update',
           params: {
+            sessionId: String(params?.sessionId || ''),
             update: {
               sessionUpdate: 'agent_message_chunk',
               content: {
@@ -175,6 +267,7 @@ rl.on('line', async (line) => {
           jsonrpc: '2.0',
           method: 'session/update',
           params: {
+            sessionId: String(params?.sessionId || ''),
             update: {
               sessionUpdate: 'agent_thought_chunk',
               content: { type: 'text', text: 'I will call a tool.' },
@@ -186,6 +279,7 @@ rl.on('line', async (line) => {
           jsonrpc: '2.0',
           method: 'session/update',
           params: {
+            sessionId: String(params?.sessionId || ''),
             update: {
               sessionUpdate: 'tool_call',
               toolCallId: 'call_mock_123',
@@ -199,6 +293,7 @@ rl.on('line', async (line) => {
           jsonrpc: '2.0',
           method: 'session/update',
           params: {
+            sessionId: String(params?.sessionId || ''),
             update: {
               sessionUpdate: 'tool_call_update',
               toolCallId: 'call_mock_123',
@@ -212,10 +307,12 @@ rl.on('line', async (line) => {
       }
 
       // Normal prompt streaming
+      const sessionId = String(params?.sessionId || '');
       send({
         jsonrpc: '2.0',
         method: 'session/update',
         params: {
+          sessionId,
           update: {
             sessionUpdate: 'agent_thought_chunk',
             content: { type: 'text', text: 'Analyzing ACP request...' },
@@ -227,6 +324,7 @@ rl.on('line', async (line) => {
         jsonrpc: '2.0',
         method: 'session/update',
         params: {
+          sessionId,
           update: {
             sessionUpdate: 'agent_message_chunk',
             content: { type: 'text', text: 'Hello from mock Copilot ACP!' },
@@ -238,6 +336,7 @@ rl.on('line', async (line) => {
         jsonrpc: '2.0',
         method: 'session/update',
         params: {
+          sessionId,
           update: {
             sessionUpdate: 'usage_update',
             used: 150,

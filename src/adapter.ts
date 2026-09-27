@@ -1,3 +1,4 @@
+import { LlmAdapter } from '@deepseek-ai/dsh-llm';
 import { CopilotAcpClient } from './client.js';
 import { formatMessagesAsPrompt } from './prompt-bridge.js';
 import { AcpStreamEmitter } from './stream-bridge.js';
@@ -79,10 +80,11 @@ class AsyncChunkQueue {
  * GitHub Copilot ACP Provider Adapter
  * Implements DeepSeek Harness LlmAdapter
  */
-export class CopilotAcpAdapter {
+export class CopilotAcpAdapter extends LlmAdapter {
   private config: CopilotAcpConfig;
 
   constructor(config: CopilotAcpConfig = {}) {
+    super();
     this.config = config;
   }
 
@@ -90,7 +92,7 @@ export class CopilotAcpAdapter {
     this.config = { ...this.config, ...newConfig };
   }
 
-  public providerInfo(provider: string): { id: string; name: string } {
+  public override providerInfo(provider: string): { id: string; name: string } {
     return {
       id: provider,
       name: 'GitHub Copilot (ACP)',
@@ -98,16 +100,16 @@ export class CopilotAcpAdapter {
   }
 
   /** `dsh-llm` calls this unconditionally while registering routes. */
-  public providerRetryPolicy(_provider: string): undefined {
+  public override providerRetryPolicy(_provider: string): undefined {
     return undefined;
   }
 
   /** `dsh-llm` calls this when pricing a route. This provider declares none. */
-  public imageRequestPricing(_provider: string, _model: string): undefined {
+  public override imageRequestPricing(_provider: string, _model: string): undefined {
     return undefined;
   }
 
-  public async listModels(provider: string, signal?: AbortSignal): Promise<ModelDescriptor[]> {
+  public override async listModels(provider: string, signal?: AbortSignal): Promise<ModelDescriptor[]> {
     if (signal?.aborted) throw new Error('ACP model discovery was aborted.');
     if (this.config.models && this.config.models.length > 0) {
       return this.config.models.map((model) => this.describe(provider, model.id));
@@ -115,7 +117,7 @@ export class CopilotAcpAdapter {
 
     try {
       const client = new CopilotAcpClient(this.config);
-      const timeout = this.config.modelDiscoveryTimeoutMs ?? 15000;
+      const timeout = this.config.modelDiscoveryTimeoutMs ?? 10000;
       const discovered = await client.listModels(timeout, signal);
       return discovered.map((id) => this.describe(provider, id));
     } catch (err) {
@@ -124,7 +126,7 @@ export class CopilotAcpAdapter {
     }
   }
 
-  public resolveModel(
+  public override resolveModel(
     provider: string,
     model: string,
     signal?: AbortSignal
@@ -146,20 +148,10 @@ export class CopilotAcpAdapter {
   }
 
   private defaultDisplayName(model: string): string {
-    const names: Record<string, string> = {
-      'auto': 'Copilot Auto (GPT-5.6 Luna)',
-      'gpt-5.6-luna': 'GPT-5.6 Luna (Copilot)',
-      'claude-sonnet-4.6': 'Claude Sonnet 4.6 (Copilot)',
-      'gpt-5.4': 'GPT-5.4 (Copilot)',
-      'gemini-3.8-flash': 'Gemini 3.8 Flash (Copilot)',
-      'o4-mini': 'OpenAI o4-mini (Copilot)',
-      'mai-code-1.1-flash': 'MAI-Code 1.1 Flash (Copilot)',
-      'gpt-6-luna': 'GPT-6 Luna (Copilot)',
-    };
-    return names[model] || model;
+    return model;
   }
 
-  public async prepareCall(
+  public override async prepareCall(
     provider: string,
     model: string,
     signal?: AbortSignal
@@ -174,25 +166,22 @@ export class CopilotAcpAdapter {
     };
   }
 
-  public async *stream(options: GenerateOptions): AsyncGenerator<DshStreamChunk, void, unknown> {
+  public override async *stream(options: GenerateOptions): AsyncGenerator<DshStreamChunk, void, unknown> {
     if (options.signal?.aborted) {
       yield* new AcpStreamEmitter().finish(options.signal);
       return;
     }
 
-    const client = new CopilotAcpClient({
-      ...this.config,
-      ...(options.model ? { model: options.model } : {}),
-    });
+    const client = new CopilotAcpClient(this.config);
     const emitter = new AcpStreamEmitter();
     const queue = new AsyncChunkQueue();
     const task = this.runPrompt(client, emitter, queue, options);
     try {
       for await (const chunk of queue) yield chunk;
     } finally {
-      client.close();
       queue.close();
       await task.catch(() => undefined);
+      await client.closeAndWait();
     }
   }
 
@@ -204,12 +193,11 @@ export class CopilotAcpAdapter {
   ): Promise<void> {
     const onAbort = () => {
       client.cancel();
-      client.close();
     };
     options.signal?.addEventListener('abort', onAbort, { once: true });
     try {
       await client.initialize(undefined, options.signal);
-      const session = await client.newSession(options.cwd, undefined, options.signal);
+      const session = await client.newSession(undefined, undefined, options.signal);
       const applied = await client.setModel(session.sessionId, options.model, session);
       const promptOptions = applied || !options.model ? options : {
         ...options,

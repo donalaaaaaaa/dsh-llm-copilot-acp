@@ -1,9 +1,10 @@
+import { LlmAdapter } from '@deepseek-ai/dsh-llm';
 import type { CopilotAcpConfig, DshStreamChunk, GenerateOptions, ModelDescriptor } from './types.js';
 /**
  * GitHub Copilot ACP Provider Adapter
  * Implements DeepSeek Harness LlmAdapter
  */
-export declare class CopilotAcpAdapter {
+export declare class CopilotAcpAdapter extends LlmAdapter {
     private config;
     constructor(config?: CopilotAcpConfig);
     updateConfig(newConfig: CopilotAcpConfig): void;

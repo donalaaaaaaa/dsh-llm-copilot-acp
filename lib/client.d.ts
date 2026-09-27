@@ -17,6 +17,14 @@ export declare function isGhCopilotDeprecation(stderr: string): boolean;
 /** Resolve `rawPath` and reject anything outside `cwd`, including another drive. */
 export declare function resolveInsideCwd(cwd: string, rawPath: string): string;
 /**
+ * Resolve a file bridge path and verify the canonical path remains inside cwd.
+ * For writes to a new file, canonicalize the nearest existing parent directory.
+ */
+export declare function resolveInsideCwdCanonical(cwd: string, rawPath: string, mode: 'read' | 'write'): Promise<string>;
+export declare function resolveAcpFilePath(cwd: string, rawPath: string, mode: 'read' | 'write'): Promise<string>;
+export declare function sliceAcpText(content: string, line?: number | null, limit?: number | null): string;
+export declare function windowsTaskkillArgs(pid: number, force: boolean): string[];
+/**
  * ACP permission outcomes are only `cancelled` or `selected` plus an option id
  * the agent actually offered. There is no `accepted` outcome.
  */
@@ -36,7 +44,9 @@ export declare class CopilotAcpClient {
     private nextRequestId;
     private pendingRequests;
     private stderrTail;
-    private activeUpdateHandler;
+    private updateHandlers;
+    private sessionCwds;
+    private initializeResult;
     private isClosed;
     private childFailed;
     private generation;
@@ -77,6 +87,7 @@ export declare class CopilotAcpClient {
      * Create an ACP session
      */
     newSession(cwd?: string, timeoutMs?: number, signal?: AbortSignal): Promise<AcpSessionInfo>;
+    loadSession(sessionId: string, cwd?: string, timeoutMs?: number, signal?: AbortSignal, onUpdate?: (update: any) => void): Promise<AcpSessionInfo>;
     /**
      * Set model option on active session
      */
@@ -96,7 +107,13 @@ export declare class CopilotAcpClient {
     listModels(timeoutMs?: number, signal?: AbortSignal): Promise<string[]>;
     extractModelsFromSession(session: AcpSessionInfo): string[];
     /**
-     * Terminate child process and release resources
+     * Terminate child process and release resources.
+     * This starts shutdown immediately but does not wait for OS handles to close.
      */
     close(): void;
+    /**
+     * Close the ACP process and wait until Node observes the child/stdio close.
+     * Use this when subsequent work depends on released cwd/file handles.
+     */
+    closeAndWait(timeoutMs?: number): Promise<void>;
 }

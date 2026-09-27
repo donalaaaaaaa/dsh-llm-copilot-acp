@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import type { DshMessage, DshToolDeclaration, GenerateOptions } from './types.js';
+import type { DshMessage, DshToolDeclaration, GenerateOptions, ToolCallId } from './types.js';
 
 const PROMPT_PREAMBLE = [
   'You are being used as the active ACP agent backend for DeepSeek Harness.',
   'Use ACP capabilities to complete tasks.',
-  'IMPORTANT: If you take an action with a tool, you MUST output tool calls using <tool_call>{"name": "...", "arguments": {...}}</tool_call> blocks with JSON matching standard tool call format.',
+  'IMPORTANT: Use <tool_call>{"name": "...", "arguments": {...}}</tool_call> only for tools listed in the DSH Available Tools section below. Copilot ACP native tools are executed by Copilot itself and MUST NOT be re-emitted as DSH tool calls.',
   'If no tool is needed, answer normally.',
 ];
 
@@ -85,8 +85,27 @@ export function renderContent(content: any): string {
   return String(content).trim();
 }
 
+function renderTranscript(messages: readonly DshMessage[]): string {
+  const transcript: string[] = [];
+  for (const message of messages) {
+    if (!message || typeof message !== 'object') continue;
+    const role = message.role;
+    const roleLabel = ROLE_LABELS[role] || 'Context';
+    const rendered = renderContent(message.content);
+
+    if (message.role === 'tool') {
+      const toolId = message.toolCallId ? ` (call_id: ${message.toolCallId})` : '';
+      const prefix = message.isError ? '[Error] ' : '';
+      transcript.push(`${roleLabel}${toolId}:\n${prefix}${rendered || '(no output)'}`);
+    } else if (rendered) {
+      transcript.push(`${roleLabel}:\n${rendered}`);
+    }
+  }
+  return transcript.join('\n\n');
+}
+
 /**
- * Format full conversation messages and tools into an ACP prompt
+ * Format full conversation messages and tools into an ACP prompt.
  */
 export function formatMessagesAsPrompt(options: GenerateOptions): string {
   const sections: string[] = [...PROMPT_PREAMBLE];
@@ -100,32 +119,32 @@ export function formatMessagesAsPrompt(options: GenerateOptions): string {
     sections.push(...toolSections);
   }
 
-  const transcript: string[] = [];
-  for (const message of options.messages || []) {
-    if (!message || typeof message !== 'object') continue;
-    const role = (message.role || 'user').toLowerCase();
-    const roleLabel = ROLE_LABELS[role] || 'Context';
-    let rendered = renderContent(message.content);
-
-    if (role === 'tool') {
-      const toolId = message.toolCallId ? ` (call_id: ${message.toolCallId})` : '';
-      const prefix = message.isError ? `[Error] ` : '';
-      transcript.push(`${roleLabel}${toolId}:\n${prefix}${rendered || '(no output)'}`);
-    } else if (rendered) {
-      transcript.push(`${roleLabel}:\n${rendered}`);
-    }
-  }
-
-  if (transcript.length > 0) {
-    sections.push('Conversation transcript:\n\n' + transcript.join('\n\n'));
+  const transcript = renderTranscript(options.messages || []);
+  if (transcript) {
+    sections.push('Conversation transcript:\n\n' + transcript);
   }
 
   sections.push('Continue the conversation from the latest user request.');
-  return sections.filter((s) => s && s.trim().length > 0).join('\n\n');
+  return sections.filter((section) => section && section.trim().length > 0).join('\n\n');
+}
+
+/**
+ * Format only the messages added after a verified replay anchor.
+ * The loaded ACP session already contains the preamble, system, tools and
+ * historical prefix, so repeating them would change model-visible context.
+ */
+export function formatMessagesAsContinuation(messages: readonly DshMessage[]): string {
+  const transcript = renderTranscript(messages);
+  if (!transcript) return '';
+  return [
+    'Conversation continuation:',
+    transcript,
+    'Continue the conversation from the latest user request.',
+  ].join('\n\n');
 }
 
 export interface ExtractedToolCall {
-  id: string;
+  id: ToolCallId;
   name: string;
   arguments: Record<string, any>;
   rawArguments: string;
@@ -148,7 +167,7 @@ export function extractToolCallsFromText(text: string): {
       const parsed = JSON.parse(rawJson);
       let name = '';
       let args: any = {};
-      let id = parsed.id || `call_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
+      const id = (parsed.id || `call_${randomUUID().replace(/-/g, '').slice(0, 16)}`) as ToolCallId;
 
       if (parsed.function && typeof parsed.function === 'object') {
         name = parsed.function.name || '';

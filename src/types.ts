@@ -1,7 +1,21 @@
-/**
- * Type definitions for github-copilot-acp Provider
- */
+import type {
+  ContentBlock,
+  ContentBlockType,
+  FinishReason,
+  GenerateOptions as DshGenerateOptions,
+  LlmResolvedModelInfo,
+  ModelModality,
+  ReplayEnvelope,
+  RequestMessage,
+  StreamChunk,
+  ToolCallId,
+  ToolSchema,
+} from '@deepseek-ai/dsh-llm';
 
+/**
+ * Provider configuration. DSH request/stream vocabulary is imported from
+ * @deepseek-ai/dsh-llm rather than duplicated locally.
+ */
 export interface CopilotAcpConfig {
   /** Copilot CLI executable path (defaults to "copilot") */
   command?: string;
@@ -13,146 +27,24 @@ export interface CopilotAcpConfig {
   timeoutMs?: number;
   /** Timeout for model discovery in milliseconds (defaults to 10,000) */
   modelDiscoveryTimeoutMs?: number;
-  /** Pass --allow-all-tools or permit tool operations (defaults to true) */
+  /** Permit Copilot tool operations without interactive approval (defaults to false) */
   allowAllTools?: boolean;
-  /** Whether to allow local fs reads/writes requested by Copilot (defaults to true) */
+  /** Whether to allow local fs reads/writes requested by Copilot (defaults to false) */
   allowFileRequests?: boolean;
-  /** Specific model to pass to Copilot CLI (e.g. via --model) */
-  model?: string;
   /** Custom configured models list */
   models?: Array<{
     id: string;
     name?: string;
-    inputModalities?: string[];
+    inputModalities?: ModelModality[];
     contextWindow?: number;
   }>;
 }
 
-export type DshRole = 'system' | 'user' | 'assistant' | 'tool' | 'developer';
-
-export interface DshTextBlock {
-  type: 'text';
-  text: string;
-}
-
-export interface DshReasoningBlock {
-  type: 'reasoning';
-  text: string;
-}
-
-export interface DshToolCallBlock {
-  type: 'tool-call';
-  id: string;
-  name: string;
-  arguments: string;
-}
-
-export type DshContentBlock = DshTextBlock | DshReasoningBlock | DshToolCallBlock | { type: string; [key: string]: any };
-
-export interface DshMessage {
-  role: DshRole;
-  content: DshContentBlock[];
-  id?: string;
-  toolCallId?: string;
-  isError?: boolean;
-}
-
-export interface DshToolDeclaration {
-  name: string;
-  description?: string;
-  parameters?: Record<string, any>;
-  deferLoading?: boolean;
-}
-
-export interface GenerateOptions {
-  provider: string;
-  model: string;
-  messages: DshMessage[];
-  system?: string;
-  tools?: DshToolDeclaration[];
-  toolChoice?: any;
-  signal?: AbortSignal;
-  temperature?: number;
-  maxTokens?: number;
-  sessionId?: string;
-  reasoningEffort?: string;
-  stop?: any;
-  cwd?: string;
-}
-
-export type StreamChunkBlockType = 'text' | 'reasoning' | 'tool-call';
-
-export interface BlockStartChunk {
-  type: 'block-start';
-  index: number;
-  blockType: StreamChunkBlockType;
-}
-
-export interface TextDeltaChunk {
-  type: 'text-delta';
-  index: number;
-  text: string;
-}
-
-export interface ReasoningDeltaChunk {
-  type: 'reasoning-delta';
-  index: number;
-  text: string;
-}
-
-export interface ToolCallDeltaChunk {
-  type: 'tool-call-delta';
-  index: number;
-  id: string;
-  name?: string;
-  argumentsDelta: string;
-}
-
-export interface BlockEndChunk {
-  type: 'block-end';
-  index: number;
-  block: DshContentBlock;
-}
-
-export interface UsageChunk {
-  type: 'usage';
-  usage: {
-    inputTokens: number;
-    outputTokens: number;
-    totalTokens: number;
-    cacheReadTokens?: number;
-    cacheWriteTokens?: number;
-  };
-}
-
-export interface FinishReason {
-  kind: 'stop' | 'tool-calls' | 'aborted' | 'error' | 'max-tokens';
-  failure?: {
-    message: string;
-    code: string;
-  };
-}
-
-export interface FinishChunk {
-  type: 'finish';
-  reason: FinishReason;
-}
-
-export type DshStreamChunk =
-  | BlockStartChunk
-  | TextDeltaChunk
-  | ReasoningDeltaChunk
-  | ToolCallDeltaChunk
-  | BlockEndChunk
-  | UsageChunk
-  | FinishChunk;
-
-export interface ModelDescriptor {
-  provider: string;
-  id: string;
-  name: string;
-  inputModalities?: string[];
-  context?: {
-    contextWindow: number;
-  };
-}
+export type GenerateOptions = DshGenerateOptions;
+export type DshStreamChunk = StreamChunk;
+export type DshMessage = RequestMessage;
+export type DshToolDeclaration = ToolSchema;
+export type ModelDescriptor = LlmResolvedModelInfo;
+export type DshContentBlock = ContentBlock;
+export type StreamChunkBlockType = ContentBlockType;
+export type { FinishReason, ReplayEnvelope, ToolCallId };
