@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { existsSync } from 'node:fs';
-import { readFile, writeFile, mkdir, realpath, lstat } from 'node:fs/promises';
+import { readFile, writeFile, realpath, lstat } from 'node:fs/promises';
 import type { CopilotAcpConfig } from './types.js';
 
 export interface AcpSessionInfo {
@@ -96,6 +96,63 @@ export async function resolveInsideCwdCanonical(
   }
 }
 
+export async function resolveAcpFilePath(
+  cwd: string,
+  rawPath: string,
+  mode: 'read' | 'write'
+): Promise<string> {
+  if (!isAbsolute(rawPath)) {
+    throw new Error(`ACP file path '${rawPath}' must be absolute.`);
+  }
+  return resolveInsideCwdCanonical(cwd, rawPath, mode);
+}
+
+export function sliceAcpText(content: string, line?: number | null, limit?: number | null): string {
+  if (line === undefined && limit === undefined) return content;
+  if (line !== undefined && line !== null && (!Number.isInteger(line) || line < 1)) {
+    throw new Error('ACP read line must be a 1-based positive integer.');
+  }
+  if (limit !== undefined && limit !== null && (!Number.isInteger(limit) || limit < 0)) {
+    throw new Error('ACP read limit must be a non-negative integer.');
+  }
+  const lines = content.split('\n');
+  const start = (line ?? 1) - 1;
+  const end = limit === undefined || limit === null ? undefined : start + limit;
+  return lines.slice(start, end).join('\n');
+}
+
+export function windowsTaskkillArgs(pid: number, force: boolean): string[] {
+  return ['/PID', String(pid), '/T', ...(force ? ['/F'] : [])];
+}
+
+function terminateProcessTree(proc: ChildProcess, force: boolean): void {
+  if (proc.exitCode !== null) return;
+  if (process.platform === 'win32' && proc.pid) {
+    try {
+      const killer = spawn('taskkill', windowsTaskkillArgs(proc.pid, force), {
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+      killer.on('error', () => {
+        try {
+          proc.kill(force ? 'SIGKILL' : 'SIGTERM');
+        } catch {
+          // The process is already gone.
+        }
+      });
+      killer.unref();
+      return;
+    } catch {
+      // Fall through to ChildProcess.kill().
+    }
+  }
+  try {
+    proc.kill(force ? 'SIGKILL' : 'SIGTERM');
+  } catch {
+    // The process is already gone.
+  }
+}
+
 /**
  * ACP permission outcomes are only `cancelled` or `selected` plus an option id
  * the agent actually offered. There is no `accepted` outcome.
@@ -128,7 +185,9 @@ export class CopilotAcpClient {
     }
   >();
   private stderrTail: string[] = [];
-  private activeUpdateHandler: ((update: any) => void) | null = null;
+  private updateHandlers = new Map<string, (update: any) => void>();
+  private sessionCwds = new Map<string, string>();
+  private initializeResult: any = null;
   private isClosed = false;
   private childFailed = false;
   private generation = 0;
@@ -394,9 +453,11 @@ export class CopilotAcpClient {
     // Server-initiated notification
     if (msg.method === 'session/update') {
       const update = msg.params?.update;
-      if (this.activeUpdateHandler) {
+      const sessionId = typeof msg.params?.sessionId === 'string' ? msg.params.sessionId : '';
+      const handler = sessionId ? this.updateHandlers.get(sessionId) : undefined;
+      if (handler) {
         try {
-          this.activeUpdateHandler(update);
+          handler(update);
         } catch {
           // Update handler error shouldn't crash client
         }
@@ -440,9 +501,12 @@ export class CopilotAcpClient {
         return;
       }
       try {
-        const filePath = await resolveInsideCwdCanonical(this.sessionCwd, String(params?.path || ''), 'read');
+        const sessionId = String(params?.sessionId || '');
+        const root = this.sessionCwds.get(sessionId);
+        if (!root) throw new Error(`Unknown ACP session '${sessionId}'.`);
+        const filePath = await resolveAcpFilePath(root, String(params?.path || ''), 'read');
         const content = await readFile(filePath, 'utf8');
-        respondResult({ content });
+        respondResult({ content: sliceAcpText(content, params?.line, params?.limit) });
       } catch (err: any) {
         respondError(-32602, `Failed to read file: ${err.message}`);
       }
@@ -455,9 +519,11 @@ export class CopilotAcpClient {
         return;
       }
       try {
-        const filePath = await resolveInsideCwdCanonical(this.sessionCwd, String(params?.path || ''), 'write');
-        await mkdir(dirname(filePath), { recursive: true });
-        await writeFile(filePath, String(params?.content || ''), 'utf8');
+        const sessionId = String(params?.sessionId || '');
+        const root = this.sessionCwds.get(sessionId);
+        if (!root) throw new Error(`Unknown ACP session '${sessionId}'.`);
+        const filePath = await resolveAcpFilePath(root, String(params?.path || ''), 'write');
+        await writeFile(filePath, String(params?.content ?? ''), 'utf8');
         respondResult(null);
       } catch (err: any) {
         respondError(-32602, `Failed to write file: ${err.message}`);
@@ -568,7 +634,7 @@ export class CopilotAcpClient {
    * ACP initialize handshake
    */
   public async initialize(timeoutMs?: number, signal?: AbortSignal): Promise<any> {
-    return this.request(
+    const result = await this.request(
       'initialize',
       {
         protocolVersion: 1,
@@ -586,6 +652,8 @@ export class CopilotAcpClient {
       timeoutMs,
       signal
     );
+    this.initializeResult = result;
+    return result;
   }
 
   /**
@@ -593,7 +661,6 @@ export class CopilotAcpClient {
    */
   public async newSession(cwd?: string, timeoutMs?: number, signal?: AbortSignal): Promise<AcpSessionInfo> {
     const sessionCwd = cwd ? resolve(cwd) : this.sessionCwd;
-    this.sessionCwd = sessionCwd;
     const res = await this.request(
       'session/new',
       {
@@ -607,7 +674,35 @@ export class CopilotAcpClient {
       throw new Error('Copilot ACP did not return a sessionId from session/new.');
     }
     this.activeSessionId = String(res.sessionId);
+    this.sessionCwds.set(this.activeSessionId, sessionCwd);
     return res;
+  }
+
+  public async loadSession(
+    sessionId: string,
+    cwd?: string,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+    onUpdate?: (update: any) => void
+  ): Promise<AcpSessionInfo> {
+    if (this.initializeResult?.agentCapabilities?.loadSession !== true) {
+      throw new Error('Copilot ACP agent did not advertise loadSession capability.');
+    }
+    const sessionCwd = cwd ? resolve(cwd) : this.sessionCwd;
+    if (onUpdate) this.updateHandlers.set(sessionId, onUpdate);
+    try {
+      const result = await this.request(
+        'session/load',
+        { sessionId, cwd: sessionCwd, mcpServers: [] },
+        timeoutMs,
+        signal
+      );
+      this.activeSessionId = sessionId;
+      this.sessionCwds.set(sessionId, sessionCwd);
+      return { sessionId, ...(result || {}) };
+    } finally {
+      if (onUpdate) this.updateHandlers.delete(sessionId);
+    }
   }
 
   /**
@@ -669,7 +764,7 @@ export class CopilotAcpClient {
     onUpdate: (update: any) => void,
     signal?: AbortSignal
   ): Promise<any> {
-    this.activeUpdateHandler = onUpdate;
+    this.updateHandlers.set(sessionId, onUpdate);
     try {
       const res = await this.request(
         'session/prompt',
@@ -682,7 +777,7 @@ export class CopilotAcpClient {
       );
       return res;
     } finally {
-      this.activeUpdateHandler = null;
+      this.updateHandlers.delete(sessionId);
     }
   }
 
@@ -760,24 +855,17 @@ export class CopilotAcpClient {
     this.isClosed = true;
     this.generation += 1;
     this.activeSessionId = null;
+    this.updateHandlers.clear();
+    this.sessionCwds.clear();
+    this.initializeResult = null;
     const proc = this.child;
     this.child = null;
     this.failAllPending(new Error('Copilot ACP process closed.'));
     if (!proc) return;
-    try {
-      proc.kill();
-    } catch {
-      // ignore
-    }
+    terminateProcessTree(proc, false);
 
     const timer = setTimeout(() => {
-      try {
-        if (proc.exitCode === null) {
-          proc.kill('SIGKILL');
-        }
-      } catch {
-        // ignore
-      }
+      terminateProcessTree(proc, true);
     }, 2000);
     (timer as any).unref?.();
   }
