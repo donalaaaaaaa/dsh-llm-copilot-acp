@@ -8,7 +8,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
@@ -30,17 +30,6 @@ jobs:
         with:
           name: compiled-lib
           path: lib
-      - name: Sync compiled lib on refactor branch
-        if: github.event_name == 'push' && github.ref == 'refs/heads/refactor/acp-hardening'
-        run: |
-          if git diff --quiet -- lib; then
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add lib
-          git commit -m "build: sync compiled lib"
-          git push origin HEAD:refactor/acp-hardening
       - name: Verify committed build output
         run: git diff --exit-code -- lib
       - name: Test
