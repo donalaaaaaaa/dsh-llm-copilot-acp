@@ -182,6 +182,44 @@ test('AcpStreamEmitter: preserves malformed unclosed tool tags as text', () => {
   assert.ok(chunks.every((chunk) => chunk.type !== 'tool-call-delta'));
 });
 
+test('AcpStreamEmitter: abort suppresses executable textual tool calls', () => {
+  const emitter = new AcpStreamEmitter();
+  emitter.handleSessionUpdate({
+    sessionUpdate: 'agent_message_chunk',
+    content: {
+      type: 'text',
+      text: 'Before <tool_call>{"name":"glob","arguments":{"pattern":"*.ts"}}</tool_call>',
+    },
+  });
+
+  const controller = new AbortController();
+  controller.abort();
+  const chunks = emitter.finish(controller.signal);
+
+  assert.ok(chunks.every((chunk) => chunk.type !== 'tool-call-delta'));
+  const finish = chunks[chunks.length - 1] as any;
+  assert.strictEqual(finish.type, 'finish');
+  assert.strictEqual(finish.reason.kind, 'aborted');
+});
+
+test('AcpStreamEmitter: error suppresses executable textual tool calls', () => {
+  const emitter = new AcpStreamEmitter();
+  emitter.handleSessionUpdate({
+    sessionUpdate: 'agent_message_chunk',
+    content: {
+      type: 'text',
+      text: '<tool_call>{"name":"glob","arguments":{"pattern":"*.ts"}}</tool_call>',
+    },
+  });
+
+  const chunks = emitter.finish(undefined, new Error('boom'));
+
+  assert.ok(chunks.every((chunk) => chunk.type !== 'tool-call-delta'));
+  const finish = chunks[chunks.length - 1] as any;
+  assert.strictEqual(finish.type, 'finish');
+  assert.strictEqual(finish.reason.kind, 'error');
+});
+
 test('AcpStreamEmitter: does not treat context usage as token usage', () => {
   const emitter = new AcpStreamEmitter();
   assert.deepStrictEqual(emitter.handleSessionUpdate({
