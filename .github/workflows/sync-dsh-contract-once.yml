@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - refactor/acp-hardening
-    paths:
-      - .github/workflows/sync-dsh-contract-once.yml
 
 permissions:
   contents: write
