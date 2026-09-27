@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -129,19 +129,11 @@ function terminateProcessTree(proc: ChildProcess, force: boolean): void {
   if (proc.exitCode !== null) return;
   if (process.platform === 'win32' && proc.pid) {
     try {
-      const killer = spawn('taskkill', windowsTaskkillArgs(proc.pid, force), {
+      const result = spawnSync('taskkill', windowsTaskkillArgs(proc.pid, force), {
         windowsHide: true,
         stdio: 'ignore',
       });
-      killer.on('error', () => {
-        try {
-          proc.kill(force ? 'SIGKILL' : 'SIGTERM');
-        } catch {
-          // The process is already gone.
-        }
-      });
-      killer.unref();
-      return;
+      if (!result.error && result.status === 0) return;
     } catch {
       // Fall through to ChildProcess.kill().
     }
