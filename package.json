@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-llm-copilot-acp",
-  "version": "0.1.7-rc.2",
+  "version": "0.1.7-rc.3",
   "description": "GitHub Copilot CLI ACP Provider for DeepSeek Harness Desktop",
   "type": "module",
   "main": "lib/index.js",
@@ -20,7 +20,9 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "node --test test/**/*.test.js test/**/*.test.ts"
+    "pretest": "npm run build",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "prepack": "npm run build"
   },
   "keywords": [
     "deepseek-harness",
@@ -31,6 +33,7 @@
   "author": "DeepSeek Harness Community",
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "^26.6.2"
+    "@types/node": "^26.6.2",
+    "typescript": "5.8.3"
   }
 }
