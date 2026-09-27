@@ -148,12 +148,18 @@ test('CopilotAcpClient: listModels discovery method', async () => {
   assert.deepStrictEqual(models, ['gpt-4o', 'claude-3.5-sonnet', 'o1-preview']);
 });
 
-test('resolveInsideCwd rejects parent, sibling, and other-drive paths', () => {
-  const root = 'C:\\work\\proj';
-  assert.strictEqual(resolveInsideCwd(root, 'C:\\work\\proj\\a.txt'), 'C:\\work\\proj\\a.txt');
-  for (const target of ['C:\\secret\\x', 'D:\\secret\\x', 'C:\\work\\proj-evil\\x', 'C:\\work\\proj\\..\\secret']) {
+test('resolveInsideCwd rejects parent and sibling paths on the current platform', () => {
+  const root = resolve('sandbox-root');
+  assert.strictEqual(resolveInsideCwd(root, 'a.txt'), resolve(root, 'a.txt'));
+  for (const target of ['../secret/x', '../sandbox-root-evil/x']) {
     assert.throws(() => resolveInsideCwd(root, target), /Access denied/);
   }
+});
+
+test('resolveInsideCwd rejects another drive on Windows', { skip: process.platform !== 'win32' }, () => {
+  const root = 'C:\\work\\proj';
+  assert.strictEqual(resolveInsideCwd(root, 'C:\\work\\proj\\a.txt'), 'C:\\work\\proj\\a.txt');
+  assert.throws(() => resolveInsideCwd(root, 'D:\\secret\\x'), /Access denied/);
 });
 
 test('resolveInsideCwdCanonical rejects symlink or junction escapes', async () => {
