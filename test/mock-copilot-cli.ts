@@ -54,6 +54,7 @@ rl.on('line', async (line) => {
           protocolVersion: 1,
           capabilities: { models: true },
           echoedPermission: permission?.result ?? null,
+          echoedClientCapabilities: params?.clientCapabilities ?? null,
         },
       });
       return;
