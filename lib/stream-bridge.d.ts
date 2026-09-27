@@ -3,7 +3,6 @@ export declare class AcpStreamEmitter {
     private blockIndex;
     private currentBlockType;
     private currentBlockText;
-    private currentToolCall;
     private hasEmittedToolCall;
     private fullMessageText;
     private fullReasoningText;

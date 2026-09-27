@@ -21,6 +21,9 @@ export declare function resolveInsideCwd(cwd: string, rawPath: string): string;
  * For writes to a new file, canonicalize the nearest existing parent directory.
  */
 export declare function resolveInsideCwdCanonical(cwd: string, rawPath: string, mode: 'read' | 'write'): Promise<string>;
+export declare function resolveAcpFilePath(cwd: string, rawPath: string, mode: 'read' | 'write'): Promise<string>;
+export declare function sliceAcpText(content: string, line?: number | null, limit?: number | null): string;
+export declare function windowsTaskkillArgs(pid: number, force: boolean): string[];
 /**
  * ACP permission outcomes are only `cancelled` or `selected` plus an option id
  * the agent actually offered. There is no `accepted` outcome.
@@ -41,7 +44,9 @@ export declare class CopilotAcpClient {
     private nextRequestId;
     private pendingRequests;
     private stderrTail;
-    private activeUpdateHandler;
+    private updateHandlers;
+    private sessionCwds;
+    private initializeResult;
     private isClosed;
     private childFailed;
     private generation;
@@ -82,6 +87,7 @@ export declare class CopilotAcpClient {
      * Create an ACP session
      */
     newSession(cwd?: string, timeoutMs?: number, signal?: AbortSignal): Promise<AcpSessionInfo>;
+    loadSession(sessionId: string, cwd?: string, timeoutMs?: number, signal?: AbortSignal, onUpdate?: (update: any) => void): Promise<AcpSessionInfo>;
     /**
      * Set model option on active session
      */

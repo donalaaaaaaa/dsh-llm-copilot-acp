@@ -1,4 +1,4 @@
-import type { DshToolDeclaration, GenerateOptions } from './types.js';
+import type { DshToolDeclaration, GenerateOptions, ToolCallId } from './types.js';
 /**
  * Render tool declarations for prompt bridge
  */
@@ -12,7 +12,7 @@ export declare function renderContent(content: any): string;
  */
 export declare function formatMessagesAsPrompt(options: GenerateOptions): string;
 export interface ExtractedToolCall {
-    id: string;
+    id: ToolCallId;
     name: string;
     arguments: Record<string, any>;
     rawArguments: string;
