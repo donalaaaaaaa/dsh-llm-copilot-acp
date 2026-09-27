@@ -307,10 +307,12 @@ rl.on('line', async (line) => {
       }
 
       // Normal prompt streaming
+      const sessionId = String(params?.sessionId || '');
       send({
         jsonrpc: '2.0',
         method: 'session/update',
         params: {
+          sessionId,
           update: {
             sessionUpdate: 'agent_thought_chunk',
             content: { type: 'text', text: 'Analyzing ACP request...' },
@@ -322,6 +324,7 @@ rl.on('line', async (line) => {
         jsonrpc: '2.0',
         method: 'session/update',
         params: {
+          sessionId,
           update: {
             sessionUpdate: 'agent_message_chunk',
             content: { type: 'text', text: 'Hello from mock Copilot ACP!' },
@@ -333,6 +336,7 @@ rl.on('line', async (line) => {
         jsonrpc: '2.0',
         method: 'session/update',
         params: {
+          sessionId,
           update: {
             sessionUpdate: 'usage_update',
             used: 150,
