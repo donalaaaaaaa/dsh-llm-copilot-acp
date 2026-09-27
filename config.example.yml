@@ -22,17 +22,16 @@
     # 默认值: copilot（或读取环境变量 COPILOT_ACP_COMMAND / COPILOT_CLI_PATH）
     command: copilot
 
-    # 启动命令行参数，默认包含 --acp 与 --allow-all-tools
+    # 启动命令行参数，默认只包含 --acp
     # 可通过环境变量 COPILOT_ACP_ARGS 覆盖
     args:
       - "--acp"
-      - "--allow-all-tools"
 
     # 操作超时时间 (毫秒)，默认 15 分钟
     timeoutMs: 900000
 
     # 是否允许 Copilot 在会话目录内通过 ACP 文件桥读写
-    allowFileRequests: true
+    allowFileRequests: false
 
     # 模型发现超时（毫秒）。发现失败时目录为空，不会填入猜出来的模型名。
     modelDiscoveryTimeoutMs: 10000
