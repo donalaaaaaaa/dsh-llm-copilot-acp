@@ -1,8 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { resolve } from 'node:path';
-import { writeFile, unlink } from 'node:fs/promises';
-import { CopilotAcpClient, isGhCopilotDeprecation, permissionOutcome, resolveInsideCwd } from '../lib/client.js';
+import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { writeFile, unlink, mkdtemp, rm, symlink } from 'node:fs/promises';
+import {
+  CopilotAcpClient,
+  isGhCopilotDeprecation,
+  permissionOutcome,
+  resolveInsideCwd,
+  resolveInsideCwdCanonical,
+} from '../lib/client.js';
 
 const mockCliPath = resolve('test/mock-copilot-cli.ts');
 const nodeBin = process.execPath;
@@ -22,6 +29,8 @@ test('CopilotAcpClient: initialize and session/new with mock CLI', async () => {
     args: ['--experimental-strip-types', mockCliPath],
     cwd: process.cwd(),
     timeoutMs: 5000,
+    allowAllTools: true,
+    allowFileRequests: true,
   });
 
   try {
@@ -29,6 +38,10 @@ test('CopilotAcpClient: initialize and session/new with mock CLI', async () => {
     assert.strictEqual(initRes.protocolVersion, 1);
     assert.strictEqual(initRes.echoedPermission.outcome.outcome, 'selected');
     assert.strictEqual(initRes.echoedPermission.outcome.optionId, 'allow-once');
+    assert.deepStrictEqual(initRes.echoedClientCapabilities.fs, {
+      readTextFile: true,
+      writeTextFile: true,
+    });
 
     const session = await client.newSession();
     assert.strictEqual(session.sessionId, 'sess_mock_001');
@@ -36,6 +49,22 @@ test('CopilotAcpClient: initialize and session/new with mock CLI', async () => {
 
     const models = client.extractModelsFromSession(session);
     assert.deepStrictEqual(models, ['gpt-4o', 'claude-3.5-sonnet', 'o1-preview']);
+  } finally {
+    client.close();
+  }
+});
+
+test('CopilotAcpClient: least-privilege defaults cancel permissions and omit fs capability', async () => {
+  const client = new CopilotAcpClient({
+    command: nodeBin,
+    args: ['--experimental-strip-types', mockCliPath],
+    cwd: process.cwd(),
+    timeoutMs: 5000,
+  });
+  try {
+    const initRes = await client.initialize();
+    assert.deepStrictEqual(initRes.echoedPermission, { outcome: { outcome: 'cancelled' } });
+    assert.strictEqual(initRes.echoedClientCapabilities.fs, undefined);
   } finally {
     client.close();
   }
@@ -124,6 +153,27 @@ test('resolveInsideCwd rejects parent, sibling, and other-drive paths', () => {
   assert.strictEqual(resolveInsideCwd(root, 'C:\\work\\proj\\a.txt'), 'C:\\work\\proj\\a.txt');
   for (const target of ['C:\\secret\\x', 'D:\\secret\\x', 'C:\\work\\proj-evil\\x', 'C:\\work\\proj\\..\\secret']) {
     assert.throws(() => resolveInsideCwd(root, target), /Access denied/);
+  }
+});
+
+test('resolveInsideCwdCanonical rejects symlink or junction escapes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'copilot-acp-root-'));
+  const outside = await mkdtemp(join(tmpdir(), 'copilot-acp-outside-'));
+  try {
+    await writeFile(join(outside, 'secret.txt'), 'secret', 'utf8');
+    const linkPath = join(root, 'escape');
+    await symlink(outside, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
+    await assert.rejects(
+      () => resolveInsideCwdCanonical(root, join('escape', 'secret.txt'), 'read'),
+      /symbolic link|outside session cwd|Access denied/
+    );
+    await assert.rejects(
+      () => resolveInsideCwdCanonical(root, join('escape', 'new.txt'), 'write'),
+      /symbolic link|outside session cwd|Access denied/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
   }
 });
 
