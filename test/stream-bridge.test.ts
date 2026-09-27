@@ -111,7 +111,7 @@ test('AcpStreamEmitter: ignores native ACP tool_call updates', () => {
 test('AcpStreamEmitter: handles text-based <tool_call> extraction', () => {
   const emitter = new AcpStreamEmitter();
 
-  emitter.handleSessionUpdate({
+  const streamed = emitter.handleSessionUpdate({
     sessionUpdate: 'agent_message_chunk',
     content: {
       type: 'text',
@@ -119,7 +119,9 @@ test('AcpStreamEmitter: handles text-based <tool_call> extraction', () => {
     },
   });
 
+  assert.ok(streamed.every((chunk) => chunk.type !== 'text-delta' || !chunk.text.includes('<tool_call>')));
   const finishChunks = emitter.finish();
+  assert.ok(finishChunks.every((chunk) => chunk.type !== 'text-delta' || !chunk.text.includes('<tool_call>')));
   const deltas = finishChunks.filter((chunk) => chunk.type === 'tool-call-delta');
   assert.strictEqual(deltas.length, 1);
   assert.strictEqual((deltas[0] as any).argumentsDelta, '{"pattern":"*.ts"}');
@@ -128,6 +130,56 @@ test('AcpStreamEmitter: handles text-based <tool_call> extraction', () => {
   const finish = finishChunks[finishChunks.length - 1];
   assert.strictEqual(finish.type, 'finish');
   assert.strictEqual((finish as any).reason.kind, 'tool-calls');
+});
+
+test('AcpStreamEmitter: withholds tool tags split across ACP chunks', () => {
+  const emitter = new AcpStreamEmitter();
+  const chunks = [
+    ...emitter.handleSessionUpdate({
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'text', text: 'Before <tool_' },
+    }),
+    ...emitter.handleSessionUpdate({
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'text', text: 'call>{"name":"glob","arguments":' },
+    }),
+    ...emitter.handleSessionUpdate({
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'text', text: '{"pattern":"*.ts"}}</tool_call> After' },
+    }),
+    ...emitter.finish(),
+  ];
+
+  const visibleText = chunks
+    .filter((chunk) => chunk.type === 'text-delta')
+    .map((chunk: any) => chunk.text)
+    .join('');
+  assert.strictEqual(visibleText, 'Before  After');
+  assert.doesNotMatch(visibleText, /tool_call/i);
+
+  const toolCall = chunks.find((chunk) => chunk.type === 'tool-call-delta') as any;
+  assert.ok(toolCall);
+  assert.strictEqual(toolCall.name, 'glob');
+  assert.strictEqual(toolCall.argumentsDelta, '{"pattern":"*.ts"}');
+  const finish = chunks[chunks.length - 1] as any;
+  assert.strictEqual(finish.reason.kind, 'tool-calls');
+});
+
+test('AcpStreamEmitter: preserves malformed unclosed tool tags as text', () => {
+  const emitter = new AcpStreamEmitter();
+  const chunks = [
+    ...emitter.handleSessionUpdate({
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'text', text: 'Hello <tool_call>{"name":"broken"' },
+    }),
+    ...emitter.finish(),
+  ];
+  const visibleText = chunks
+    .filter((chunk) => chunk.type === 'text-delta')
+    .map((chunk: any) => chunk.text)
+    .join('');
+  assert.strictEqual(visibleText, 'Hello <tool_call>{"name":"broken"');
+  assert.ok(chunks.every((chunk) => chunk.type !== 'tool-call-delta'));
 });
 
 test('AcpStreamEmitter: does not treat context usage as token usage', () => {
