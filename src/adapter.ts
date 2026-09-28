@@ -182,7 +182,9 @@ export class CopilotAcpAdapter {
 
     const client = new CopilotAcpClient({
       ...this.config,
-      ...(options.model ? { model: options.model } : {}),
+      ...(options.tools?.length && this.config.permissionMode === undefined
+        ? { permissionMode: 'deny' as const }
+        : {}),
     });
     const emitter = new AcpStreamEmitter();
     const queue = new AsyncChunkQueue();
@@ -215,7 +217,7 @@ export class CopilotAcpAdapter {
         ...options,
         system: `${options.system ? `${options.system}\n\n` : ''}The requested model "${options.model}" is not offered by this Copilot session. Continue with the session default.`,
       };
-      await client.prompt(
+      const promptResult = await client.prompt(
         session.sessionId,
         formatMessagesAsPrompt(promptOptions),
         (update) => {
@@ -223,7 +225,7 @@ export class CopilotAcpAdapter {
         },
         options.signal
       );
-      queue.pushMany(emitter.finish(options.signal));
+      queue.pushMany(emitter.finish(options.signal, undefined, promptResult?.stopReason));
       queue.close();
     } catch (err) {
       queue.pushMany(emitter.finish(options.signal, options.signal?.aborted ? undefined : err));
