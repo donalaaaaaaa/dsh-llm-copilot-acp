@@ -1,4 +1,5 @@
-import type { CopilotAcpConfig, DshStreamChunk, GenerateOptions, ModelDescriptor } from './types.js';
+import type { CopilotAcpConfig, DshStreamChunk, GenerateOptions, ModelDescriptor, ModelReasoningInfo } from './types.js';
+export declare function resolveReasoningInfo(modelId: string, configuredEfforts?: Record<string, string | null> | false, configuredDefault?: string, providerDefault?: string): ModelReasoningInfo | undefined;
 /**
  * GitHub Copilot ACP Provider Adapter
  * Implements DeepSeek Harness LlmAdapter

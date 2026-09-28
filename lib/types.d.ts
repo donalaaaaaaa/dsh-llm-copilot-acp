@@ -1,6 +1,23 @@
 /**
  * Type definitions for github-copilot-acp Provider
  */
+export interface ModelReasoningEffort {
+    id: string;
+    name: string;
+    description?: string;
+}
+export interface ModelReasoningInfo {
+    efforts: ModelReasoningEffort[];
+    defaultEffort?: string;
+}
+export interface CopilotModelConfig {
+    id: string;
+    name?: string;
+    inputModalities?: string[];
+    contextWindow?: number;
+    reasoningEfforts?: Record<string, string | null> | false;
+    defaultEffort?: string;
+}
 export interface CopilotAcpConfig {
     /** Copilot CLI executable path (defaults to "copilot") */
     command?: string;
@@ -20,13 +37,10 @@ export interface CopilotAcpConfig {
     allowFileRequests?: boolean;
     /** @deprecated Model selection is session-scoped; retained only for config compatibility. */
     model?: string;
+    /** Provider-wide default reasoning level */
+    reasoning?: string;
     /** Custom configured models list */
-    models?: Array<{
-        id: string;
-        name?: string;
-        inputModalities?: string[];
-        contextWindow?: number;
-    }>;
+    models?: CopilotModelConfig[];
 }
 export type DshRole = 'system' | 'user' | 'assistant' | 'tool' | 'developer';
 export interface DshTextBlock {
@@ -133,4 +147,5 @@ export interface ModelDescriptor {
     context?: {
         contextWindow: number;
     };
+    reasoning?: ModelReasoningInfo;
 }

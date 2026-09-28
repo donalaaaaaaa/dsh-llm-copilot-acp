@@ -633,11 +633,14 @@ export class CopilotAcpClient {
     if (modelOption) {
       const allowed = selectOptionValues(modelOption);
       if (allowed.length > 0 && !allowed.includes(requestedModel)) return false;
-      await this.request('session/set_config_option', {
+      const res = await this.request('session/set_config_option', {
         sessionId,
         configId: modelOption.id || 'model',
         value: requestedModel,
       });
+      if (res?.configOptions && sessionInfo) {
+        sessionInfo.configOptions = res.configOptions;
+      }
       return true;
     }
 
@@ -650,6 +653,57 @@ export class CopilotAcpClient {
       return true;
     } catch {
       // If server does not support set_model or rejects it, continue with session default
+      return false;
+    }
+  }
+
+  /**
+   * Set reasoning effort option on active session
+   */
+  public async setReasoningEffort(
+    sessionId: string,
+    requestedEffort: string,
+    sessionInfo?: AcpSessionInfo
+  ): Promise<boolean> {
+    if (!requestedEffort || requestedEffort === 'off') {
+      return false;
+    }
+
+    const configOptions = sessionInfo?.configOptions || [];
+    const reasoningOption = configOptions.find(
+      (opt: any) =>
+        opt && typeof opt === 'object' && (opt.id === 'reasoning_effort' || opt.category === 'thought_level')
+    );
+
+    if (reasoningOption) {
+      const allowed = selectOptionValues(reasoningOption);
+      if (allowed.length > 0 && !allowed.includes(requestedEffort)) {
+        return false;
+      }
+      try {
+        const res = await this.request('session/set_config_option', {
+          sessionId,
+          configId: reasoningOption.id || 'reasoning_effort',
+          value: requestedEffort,
+        });
+        if (res?.configOptions && sessionInfo) {
+          sessionInfo.configOptions = res.configOptions;
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    // Fallback: try setting directly
+    try {
+      await this.request('session/set_config_option', {
+        sessionId,
+        configId: 'reasoning_effort',
+        value: requestedEffort,
+      });
+      return true;
+    } catch {
       return false;
     }
   }

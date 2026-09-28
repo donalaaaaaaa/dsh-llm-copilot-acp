@@ -86,6 +86,10 @@ export declare class CopilotAcpClient {
      */
     setModel(sessionId: string, requestedModel: string, sessionInfo?: AcpSessionInfo): Promise<boolean>;
     /**
+     * Set reasoning effort option on active session
+     */
+    setReasoningEffort(sessionId: string, requestedEffort: string, sessionInfo?: AcpSessionInfo): Promise<boolean>;
+    /**
      * Send prompt and stream updates
      */
     prompt(sessionId: string, promptText: string, onUpdate: (update: any) => void, signal?: AbortSignal): Promise<any>;

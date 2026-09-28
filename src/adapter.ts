@@ -6,6 +6,8 @@ import type {
   DshStreamChunk,
   GenerateOptions,
   ModelDescriptor,
+  ModelReasoningEffort,
+  ModelReasoningInfo,
 } from './types.js';
 
 /**
@@ -75,6 +77,127 @@ class AsyncChunkQueue {
   }
 }
 
+const EFFORT_DISPLAY_NAMES: Record<string, string> = {
+  off: 'Off',
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra High',
+  max: 'Max',
+};
+
+const EFFORT_DESCRIPTIONS: Record<string, string> = {
+  off: 'Use for simple tasks that do not need reasoning.',
+  minimal: 'Minimal reasoning before responding.',
+  low: 'Prefer for routine or latency-sensitive tasks.',
+  medium: 'Balanced reasoning and speed.',
+  high: 'The default balance for most tasks.',
+  xhigh: 'Extensive reasoning for the hardest problems.',
+  max: 'Reserve for the hardest quality-first tasks.',
+};
+
+const KNOWN_REASONING_LEVELS: readonly string[] = [
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] as const;
+
+export function resolveReasoningInfo(
+  modelId: string,
+  configuredEfforts?: Record<string, string | null> | false,
+  configuredDefault?: string,
+  providerDefault?: string
+): ModelReasoningInfo | undefined {
+  if (configuredEfforts === false) {
+    return undefined;
+  }
+
+  if (configuredEfforts && typeof configuredEfforts === 'object') {
+    const efforts: ModelReasoningEffort[] = [];
+    for (const key of KNOWN_REASONING_LEVELS) {
+      if (Object.prototype.hasOwnProperty.call(configuredEfforts, key)) {
+        const val = configuredEfforts[key];
+        if (key === 'off' || (typeof val === 'string' && val.length > 0)) {
+          efforts.push({
+            id: key,
+            name: EFFORT_DISPLAY_NAMES[key] || (key.charAt(0).toUpperCase() + key.slice(1)),
+            description: EFFORT_DESCRIPTIONS[key],
+          });
+        }
+      }
+    }
+
+    if (efforts.length === 0) return undefined;
+
+    const defaultCandidate = configuredDefault || providerDefault;
+    const defaultEffort = defaultCandidate && efforts.some((e) => e.id === defaultCandidate)
+      ? defaultCandidate
+      : undefined;
+
+    return {
+      efforts,
+      ...(defaultEffort ? { defaultEffort } : {}),
+    };
+  }
+
+  // Fallback defaults for known reasoning models if not explicitly configured
+  const lower = modelId.toLowerCase();
+  let defaultLevels: string[] | undefined;
+  let fallbackDefault: string | undefined;
+
+  if (
+    lower.startsWith('gpt-5.6') ||
+    lower.startsWith('gpt-6') ||
+    lower === 'auto'
+  ) {
+    defaultLevels = ['off', 'low', 'medium', 'high', 'xhigh', 'max'];
+    fallbackDefault = 'medium';
+  } else if (
+    lower.includes('claude') &&
+    (lower.includes('sonnet-4.6') ||
+      lower.includes('sonnet-5') ||
+      lower.includes('opus') ||
+      lower.includes('thinking'))
+  ) {
+    defaultLevels = ['off', 'low', 'medium', 'high', 'max'];
+    fallbackDefault = 'high';
+  } else if (
+    lower === 'o4-mini' ||
+    lower === 'o3-mini' ||
+    lower === 'o3' ||
+    lower === 'o1' ||
+    lower === 'o1-mini' ||
+    lower === 'o1-preview'
+  ) {
+    defaultLevels = ['off', 'low', 'medium', 'high'];
+    fallbackDefault = 'medium';
+  }
+
+  if (defaultLevels) {
+    const efforts = defaultLevels.map((lvl) => ({
+      id: lvl,
+      name: EFFORT_DISPLAY_NAMES[lvl] || (lvl.charAt(0).toUpperCase() + lvl.slice(1)),
+      description: EFFORT_DESCRIPTIONS[lvl],
+    }));
+    const defaultCandidate = configuredDefault || providerDefault || fallbackDefault;
+    const defaultEffort = defaultCandidate && efforts.some((e) => e.id === defaultCandidate)
+      ? defaultCandidate
+      : undefined;
+
+    return {
+      efforts,
+      ...(defaultEffort ? { defaultEffort } : {}),
+    };
+  }
+
+  return undefined;
+}
+
 /**
  * GitHub Copilot ACP Provider Adapter
  * Implements DeepSeek Harness LlmAdapter
@@ -136,12 +259,19 @@ export class CopilotAcpAdapter {
   private describe(provider: string, model: string): ModelDescriptor {
     const configured = this.config.models?.find((entry) => entry.id === model);
     const contextWindow = configured?.contextWindow;
+    const reasoning = resolveReasoningInfo(
+      model,
+      configured?.reasoningEfforts,
+      configured?.defaultEffort,
+      this.config.reasoning
+    );
     return {
       provider,
       id: model,
       name: configured?.name || this.defaultDisplayName(model),
       inputModalities: configured?.inputModalities || ['text'],
       ...(contextWindow === undefined ? {} : { context: { contextWindow } }),
+      ...(reasoning === undefined ? {} : { reasoning }),
     };
   }
 
@@ -203,6 +333,9 @@ export class CopilotAcpAdapter {
       await client.initialize(undefined, options.signal);
       const session = await client.newSession(options.cwd, undefined, options.signal);
       const applied = await client.setModel(session.sessionId, options.model, session);
+      if (options.reasoningEffort) {
+        await client.setReasoningEffort(session.sessionId, options.reasoningEffort, session);
+      }
       const promptOptions = applied || !options.model ? options : {
         ...options,
         system: `${options.system ? `${options.system}\n\n` : ''}The requested model "${options.model}" is not offered by this Copilot session. Continue with the session default.`,

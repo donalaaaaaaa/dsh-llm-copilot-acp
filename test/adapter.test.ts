@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { resolve } from 'node:path';
-import { CopilotAcpAdapter } from '../lib/adapter.js';
+import { CopilotAcpAdapter, resolveReasoningInfo } from '../lib/adapter.js';
 import { apply, name, inject, providerDirectoryEntries } from '../lib/index.js';
 import type { GenerateOptions } from '../lib/types.js';
 
@@ -168,4 +168,96 @@ test('Cordis Plugin: apply registers adapter and routes', () => {
   assert.ok(registeredAdapter);
   assert.deepStrictEqual(registeredRoutes, ['github-copilot-acp']);
   assert.strictEqual(discoveryNs, 'github-copilot-acp');
+});
+
+test('CopilotAcpAdapter: reasoningEfforts configuration and fallback defaults', async () => {
+  const adapter = new CopilotAcpAdapter({
+    models: [
+      {
+        id: 'custom-reasoning',
+        name: 'Custom Reasoning Model',
+        reasoningEfforts: {
+          off: null,
+          low: 'low',
+          medium: 'medium',
+          high: 'high',
+        },
+        defaultEffort: 'medium',
+      },
+      {
+        id: 'custom-non-reasoning',
+        name: 'Custom Non Reasoning',
+        reasoningEfforts: false,
+      },
+    ],
+  });
+
+  const custom = await adapter.resolveModel('github-copilot-acp', 'custom-reasoning');
+  assert.ok(custom.reasoning);
+  assert.strictEqual(custom.reasoning.defaultEffort, 'medium');
+  assert.deepStrictEqual(
+    custom.reasoning.efforts.map((e) => e.id),
+    ['off', 'low', 'medium', 'high']
+  );
+
+  const nonReasoning = await adapter.resolveModel('github-copilot-acp', 'custom-non-reasoning');
+  assert.strictEqual(nonReasoning.reasoning, undefined);
+
+  // Unconfigured known models get built-in fallback reasoning efforts
+  const gpt56 = await adapter.resolveModel('github-copilot-acp', 'gpt-5.6-luna');
+  assert.ok(gpt56.reasoning);
+  assert.strictEqual(gpt56.reasoning.defaultEffort, 'medium');
+  assert.deepStrictEqual(
+    gpt56.reasoning.efforts.map((e) => e.id),
+    ['off', 'low', 'medium', 'high', 'xhigh', 'max']
+  );
+
+  const sonnet = await adapter.resolveModel('github-copilot-acp', 'claude-sonnet-4.6');
+  assert.ok(sonnet.reasoning);
+  assert.strictEqual(sonnet.reasoning.defaultEffort, 'high');
+  assert.deepStrictEqual(
+    sonnet.reasoning.efforts.map((e) => e.id),
+    ['off', 'low', 'medium', 'high', 'max']
+  );
+
+  const o4 = await adapter.resolveModel('github-copilot-acp', 'o4-mini');
+  assert.ok(o4.reasoning);
+  assert.strictEqual(o4.reasoning.defaultEffort, 'medium');
+  assert.deepStrictEqual(
+    o4.reasoning.efforts.map((e) => e.id),
+    ['off', 'low', 'medium', 'high']
+  );
+
+  // Fast or non-reasoning models get undefined
+  const flash = await adapter.resolveModel('github-copilot-acp', 'gemini-3.8-flash');
+  assert.strictEqual(flash.reasoning, undefined);
+});
+
+test('CopilotAcpAdapter: streams prompt with reasoningEffort option', async () => {
+  const adapter = new CopilotAcpAdapter({
+    command: nodeBin,
+    args: ['--experimental-strip-types', mockCliPath],
+    cwd: process.cwd(),
+    timeoutMs: 5000,
+  });
+
+  const options: GenerateOptions = {
+    provider: 'github-copilot-acp',
+    model: 'gpt-5.6-luna',
+    reasoningEffort: 'high',
+    messages: [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Hello with high reasoning effort' }],
+      },
+    ],
+  };
+
+  const chunks: any[] = [];
+  for await (const chunk of adapter.stream(options)) {
+    chunks.push(chunk);
+  }
+
+  assert.ok(chunks.length > 0);
+  assert.ok(chunks.some((c) => c.type === 'finish' && c.reason.kind === 'stop'));
 });
