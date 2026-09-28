@@ -16,11 +16,15 @@ export interface AcpSessionInfo {
 export declare function isGhCopilotDeprecation(stderr: string): boolean;
 /** Resolve `rawPath` and reject anything outside `cwd`, including another drive. */
 export declare function resolveInsideCwd(cwd: string, rawPath: string): string;
+/** Resolve an existing path and reject symlink/junction escapes outside cwd. */
+export declare function resolveReadableInsideCwd(cwd: string, rawPath: string): Promise<string>;
+/** Resolve a write target and reject existing symlink/junction ancestors that escape cwd. */
+export declare function resolveWritableInsideCwd(cwd: string, rawPath: string): Promise<string>;
 /**
  * ACP permission outcomes are only `cancelled` or `selected` plus an option id
  * the agent actually offered. There is no `accepted` outcome.
  */
-export declare function permissionOutcome(params: any, allowAllTools: boolean): {
+export declare function permissionOutcome(params: any, mode: boolean | 'deny' | 'allow-once' | 'allow-always'): {
     outcome: {
         outcome: 'cancelled';
     };
