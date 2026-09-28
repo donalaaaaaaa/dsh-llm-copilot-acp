@@ -9,3 +9,20 @@
         modelDiscoveryTimeoutMs: 15000
         allowAllTools: false
         allowFileRequests: true
+        models:
+          - id: auto
+            name: Copilot Auto (GPT-5.6 Luna)
+          - id: gpt-5.6-luna
+            name: GPT-5.6 Luna (Copilot)
+          - id: claude-sonnet-4.6
+            name: Claude Sonnet 4.6 (Copilot)
+          - id: gpt-5.4
+            name: GPT-5.4 (Copilot)
+          - id: gemini-3.8-flash
+            name: Gemini 3.8 Flash (Copilot)
+          - id: o4-mini
+            name: OpenAI o4-mini (Copilot)
+          - id: mai-code-1.1-flash
+            name: MAI-Code 1.1 Flash (Copilot)
+          - id: gpt-6-luna
+            name: GPT-6 Luna (Copilot)
