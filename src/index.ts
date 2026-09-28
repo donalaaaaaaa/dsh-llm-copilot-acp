@@ -4,13 +4,13 @@ import type { CopilotAcpConfig } from './types.js';
 export const name = 'github-copilot-acp';
 export const inject = ['llm'];
 
-const ROUTES = ['github-copilot-acp', 'copilot-acp'] as const;
+const ROUTES = ['github-copilot-acp'] as const;
 
 /** Directory entries accepted by `llm.registerConfigurableProviders`. */
 export function providerDirectoryEntries(settingsNs = 'github-copilot-acp') {
   return ROUTES.map((provider) => ({
     provider,
-    displayName: provider === 'github-copilot-acp' ? 'GitHub Copilot (ACP)' : 'Copilot ACP',
+    displayName: 'GitHub Copilot (ACP)',
     settingsNs,
     settingsPath: [] as string[],
   }));

@@ -4,7 +4,7 @@ export declare const name = "github-copilot-acp";
 export declare const inject: string[];
 /** Directory entries accepted by `llm.registerConfigurableProviders`. */
 export declare function providerDirectoryEntries(settingsNs?: string): {
-    provider: "copilot-acp" | "github-copilot-acp";
+    provider: "github-copilot-acp";
     displayName: string;
     settingsNs: string;
     settingsPath: string[];

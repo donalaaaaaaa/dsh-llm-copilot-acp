@@ -166,6 +166,6 @@ test('Cordis Plugin: apply registers adapter and routes', () => {
 
   assert.ok(result.adapter);
   assert.ok(registeredAdapter);
-  assert.deepStrictEqual(registeredRoutes, ['github-copilot-acp', 'copilot-acp']);
+  assert.deepStrictEqual(registeredRoutes, ['github-copilot-acp']);
   assert.strictEqual(discoveryNs, 'github-copilot-acp');
 });

@@ -28,9 +28,9 @@ test('apply registers on the real LlmRuntime', async (t) => {
   await ctx.plugin({ name, inject, apply });
 
   const ids = ctx.llm.listProviders().map((provider: { id: string }) => provider.id);
-  assert.deepStrictEqual(ids, ['github-copilot-acp', 'copilot-acp']);
+  assert.deepStrictEqual(ids, ['github-copilot-acp']);
   const directory = ctx.llm.listConfigurableProviders();
-  assert.strictEqual(directory.length, 2);
+  assert.strictEqual(directory.length, 1);
   assert.ok(directory[0].settingsNs.length > 0);
   assert.strictEqual(directory[0].settingsNs, directory[1].settingsNs);
   assert.deepStrictEqual(directory[0].settingsPath, []);
