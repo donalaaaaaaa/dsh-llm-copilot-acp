@@ -311,11 +311,7 @@ rl.on('line', async (line) => {
         },
       });
 
-      send({
-        jsonrpc: '2.0',
-        id,
-        result: {},
-      });
+      finishPrompt(id);
       return;
     }
 
