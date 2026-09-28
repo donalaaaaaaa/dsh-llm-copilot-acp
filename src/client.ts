@@ -442,10 +442,10 @@ export class CopilotAcpClient {
         } else {
           const startLine = Number.isInteger(params?.line) && params.line > 0 ? params.line : 1;
           const limit = Number.isInteger(params?.limit) && params.limit >= 0 ? params.limit : undefined;
-          const lines = content.split(/\\r?\\n/);
+          const lines = content.split(/\r?\n/);
           const start = startLine - 1;
           const selected = limit === undefined ? lines.slice(start) : lines.slice(start, start + limit);
-          respondResult({ content: selected.join('\\n') });
+          respondResult({ content: selected.join('\n') });
         }
       } catch (err: any) {
         respondError(-32602, `Failed to read file: ${err.message}`);
