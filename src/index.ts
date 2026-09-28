@@ -28,11 +28,12 @@ async function loadConfigSchema(): Promise<any> {
   // Schemastery fields are optional unless `.required()`. There is no `.optional()`.
   return z.object({
     command: z.string().default('copilot').description('GitHub Copilot CLI command or path'),
-    args: z.array(z.string()).default(['--acp', '--allow-all-tools']).description('Arguments passed to the Copilot CLI'),
+    args: z.array(z.string()).default(['--acp']).description('Arguments passed to the Copilot CLI'),
     cwd: z.string().description('Working directory for the Copilot CLI subprocess'),
     timeoutMs: z.number().default(900000).description('ACP operation timeout in milliseconds'),
     modelDiscoveryTimeoutMs: z.number().default(10000).description('Model discovery timeout in milliseconds'),
-    allowAllTools: z.boolean().default(true).description('Select an allow permission option when Copilot asks'),
+    allowAllTools: z.boolean().default(false).description('Append --allow-all-tools when args are not explicitly configured'),
+    permissionMode: z.string().description('ACP permission policy: deny, allow-once, or allow-always'),
     allowFileRequests: z.boolean().default(true).description('Allow ACP read/write requests inside the session directory'),
     models: z.array(z.object({
       id: z.string().required(),
