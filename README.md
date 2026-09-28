@@ -36,17 +36,19 @@
 
 3. **完整生命周期与特性支持**：
    - **`initialize`**：协议握手，协商 ACP v1 版本与双向 Capabilities。
-   - **`session/new` (session/create)**：启动独立 ACP 会话并动态提取当前账户可用模型列表。
-   - **`session/set_config_option` / `session/set_model`**：只在会话实际提供该模型时切换。发现失败不会编造模型目录。
-   - **`session/prompt`**：发送组装好的提示词与上下文。
+   - **`session/new`**：启动独立 ACP 会话并动态提取当前账户实际广告的模型列表，支持扁平与 grouped config options。
+   - **`session/set_config_option` / `session/set_model`**：模型选择在会话建立后执行；不会把 DSH 请求的模型提前塞进 Copilot CLI 启动参数，也不会在发现为空时伪造模型目录。
+   - **`session/prompt`**：发送组装好的提示词与上下文，并将 ACP `stopReason` 映射到 DSH 的 stop / max-tokens / aborted / error。
    - **Streaming 实时响应**：
      - `agent_thought_chunk` ➡️ DSH `reasoning-delta`（思考过程）
      - `agent_message_chunk` ➡️ DSH `text-delta`（回答文本）
-     - 文本中的 `<tool_call>` ➡️ DSH 可执行 `tool-call`（供 DSH 工具循环使用）
+     - 文本中的 `<tool_call>` ➡️ DSH 可执行 `tool-call`（供 DSH 工具循环使用）；分片标签会先缓冲，原始标记不会泄漏成 `text-delta`
      - Copilot 自己的 `tool_call` / `tool_call_update` 只表示它内部已经执行的工具，不会再变成 DSH 工具调用
+     - 当 DSH 提供工具且用户没有显式覆盖权限策略时，插件默认拒绝 Copilot 的 ACP permission request，降低同一副作用被两套工具系统重复执行的风险
    - **双向 Client 请求处理**：
      - `session/request_permission` 只返回协议允许的 `selected`（带真实 `optionId`）或 `cancelled`。
-     - `fs/read_text_file` / `fs/write_text_file` 只允许会话目录内部，拒绝 `..`、兄弟目录和另一盘符。
+     - `fs/read_text_file` / `fs/write_text_file` 只允许会话目录内部；除词法路径检查外还校验 realpath，因此会拒绝通过 symlink / Windows junction 逃逸工作区。
+     - `fs/read_text_file` 支持 ACP 的 1-based `line` 与 `limit` 参数；关闭文件桥时也不会向 Agent 宣告 FS capability。
    - **健壮的异常与进程管理**：
      - 自动检测并提示旧版已废弃的 `gh copilot` 插件，指引迁移至新版 `@github/copilot`。
      - 请求超时守护（默认 15 分钟）与 `AbortSignal` 取消支持。
@@ -129,13 +131,14 @@ pnpm install
   config:
     # CLI 路径，默认为 copilot
     command: copilot
-    # 启动参数
+    # 安全默认只启动 ACP。需要 Copilot-native 工具免确认时再显式添加 --allow-all-tools。
     args:
       - "--acp"
-      - "--allow-all-tools"
     # 操作超时时间 (毫秒)，默认 15 分钟
     timeoutMs: 900000
-    # 允许读写工作区文件
+    # 不默认开启 Copilot-native 工具的全自动权限
+    allowAllTools: false
+    # 允许读写工作区文件；realpath 会阻止 symlink/junction 逃逸
     allowFileRequests: true
 ```
 
@@ -145,7 +148,7 @@ pnpm install
   name: "@deepseek-ai/dsh-agent-default-model"
   config:
     provider: github-copilot-acp
-    model: gpt-4o
+    model: "<从模型发现结果中选择实际可用的 id>"
 ```
 
 ### 方式二：环境变量覆盖（高级）
@@ -169,10 +172,17 @@ node --test test/**/*.test.js test/**/*.test.ts
 ```
 
 测试覆盖了：
-1. **PromptBridge**：工具架构渲染、上下文历史映射、`<tool_call>` 自动提取。
-2. **StreamBridge**：思考过程增量、正文增量、文本工具调用、以及忽略 Copilot 原生工具事件。
-3. **CopilotAcpClient**：协议握手、权限 outcome、目录沙箱、发现超时、缺失 CLI，以及请求 id 与服务端请求冲突。
-4. **CopilotAcpAdapter**：`providerRetryPolicy`、空目录而不是假模型、流式调用。真实 `LlmRuntime` 注册测试在能读取 Desktop 安装包时运行。
+1. **PromptBridge**：工具架构渲染、上下文历史映射与 DSH 工具所有权提示。
+2. **StreamBridge**：思考/正文增量、跨 chunk 的 `<tool_call>` 状态机、原生工具事件去重、ACP stopReason 映射。
+3. **CopilotAcpClient**：协议握手、权限 outcome、grouped model options、空模型目录、超时、缺失 CLI、请求 id 冲突、`line/limit` 与 canonical-path 文件沙箱。
+4. **CopilotAcpAdapter**：会话级模型切换、模型发现、流式调用。真实 `LlmRuntime` 注册测试在能读取 Desktop 安装包时运行。
+5. **CI**：Linux 与 Windows 都执行 TypeScript build + Node test。
+
+---
+
+## ⚠️ 当前工具桥边界
+
+DSH 工具目前仍通过 prompt 中的 `<tool_call>` 约定桥接，并不是把 DSH 工具直接注册成 ACP/MCP 工具。插件已经通过缓冲解析、默认权限收紧和原生 tool event 去重降低重复执行风险，但这仍属于兼容层。长期方向是把 DSH 工具包装为 MCP server，通过 `session/new.mcpServers` 提供给 Copilot，从而删除文本工具协议。
 
 ---
 
