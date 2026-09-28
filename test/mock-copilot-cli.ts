@@ -199,7 +199,7 @@ rl.on('line', async (line) => {
           jsonrpc: '2.0',
           id: reqId,
           method: 'fs/read_text_file',
-          params: { path: 'D:\\outside-copilot-acp\\secret.txt' },
+          params: { path: '../outside-copilot-acp/secret.txt' },
         });
         const res: any = await readPromise;
         const text = res?.error ? `READ_DENIED ${res.error.message}` : 'READ_ALLOWED';
