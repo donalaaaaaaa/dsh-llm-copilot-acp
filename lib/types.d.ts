@@ -18,7 +18,7 @@ export interface CopilotAcpConfig {
     permissionMode?: 'deny' | 'allow-once' | 'allow-always';
     /** Whether to allow local fs reads/writes requested by Copilot (defaults to true) */
     allowFileRequests?: boolean;
-    /** Specific model to pass to Copilot CLI (e.g. via --model) */
+    /** @deprecated Model selection is session-scoped; retained only for config compatibility. */
     model?: string;
     /** Custom configured models list */
     models?: Array<{
