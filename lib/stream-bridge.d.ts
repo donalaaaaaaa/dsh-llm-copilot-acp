@@ -5,19 +5,20 @@ export declare class AcpStreamEmitter {
     private currentBlockText;
     private currentToolCall;
     private hasEmittedToolCall;
-    private fullMessageText;
-    private fullReasoningText;
+    private pendingMessageText;
     private settled;
-    /**
-     * Close the currently open block if any
-     */
+    /** Close the currently open block if any. */
     closeCurrentBlock(): DshStreamChunk[];
+    private appendText;
+    private emitToolCall;
+    private trailingToolPrefixLength;
     /**
-     * Handle an ACP session/update notification and convert to DSH stream chunks
+     * Drain assistant text without ever exposing complete or partial tool tags as
+     * text deltas. Incomplete tag prefixes are retained until the next update.
      */
+    private drainMessageBuffer;
+    /** Handle an ACP session/update notification and convert to DSH stream chunks. */
     handleSessionUpdate(update: any): DshStreamChunk[];
-    /**
-     * Finalize the stream and produce finish chunk
-     */
-    finish(signal?: AbortSignal, error?: any): DshStreamChunk[];
+    /** Finalize the stream and produce the DSH finish chunk. */
+    finish(signal?: AbortSignal, error?: any, stopReason?: string): DshStreamChunk[];
 }
