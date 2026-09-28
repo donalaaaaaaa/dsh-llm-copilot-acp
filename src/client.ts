@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { existsSync } from 'node:fs';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, realpath } from 'node:fs/promises';
 import type { CopilotAcpConfig } from './types.js';
 
 export interface AcpSessionInfo {
@@ -42,17 +42,69 @@ export function resolveInsideCwd(cwd: string, rawPath: string): string {
   return target;
 }
 
+function assertInsideCanonicalRoot(root: string, target: string): void {
+  const rel = relative(root, target);
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new Error(`Access denied: real path '${target}' is outside session cwd '${root}'.`);
+  }
+}
+
+/** Resolve an existing path and reject symlink/junction escapes outside cwd. */
+export async function resolveReadableInsideCwd(cwd: string, rawPath: string): Promise<string> {
+  const lexical = resolveInsideCwd(cwd, rawPath);
+  const [root, target] = await Promise.all([realpath(resolve(cwd)), realpath(lexical)]);
+  assertInsideCanonicalRoot(root, target);
+  return target;
+}
+
+/** Resolve a write target and reject existing symlink/junction ancestors that escape cwd. */
+export async function resolveWritableInsideCwd(cwd: string, rawPath: string): Promise<string> {
+  const lexical = resolveInsideCwd(cwd, rawPath);
+  const root = await realpath(resolve(cwd));
+
+  if (existsSync(lexical)) {
+    const target = await realpath(lexical);
+    assertInsideCanonicalRoot(root, target);
+    return target;
+  }
+
+  let existingParent = dirname(lexical);
+  while (!existsSync(existingParent)) {
+    const next = dirname(existingParent);
+    if (next === existingParent) break;
+    existingParent = next;
+  }
+  const canonicalParent = await realpath(existingParent);
+  assertInsideCanonicalRoot(root, canonicalParent);
+  return lexical;
+}
+
+function selectOptionValues(option: any): string[] {
+  const raw = Array.isArray(option?.options) ? option.options : [];
+  const flattened = raw.flatMap((entry: any) =>
+    entry && Array.isArray(entry.options) ? entry.options : [entry]
+  );
+  return flattened
+    .filter((entry: any) => entry?._meta?.copilotEnablement !== 'disabled' && entry?.enabled !== false)
+    .map((entry: any) => (typeof entry === 'string' ? entry : entry?.value))
+    .filter((value: any): value is string => typeof value === 'string' && value.length > 0);
+}
+
 /**
  * ACP permission outcomes are only `cancelled` or `selected` plus an option id
  * the agent actually offered. There is no `accepted` outcome.
  */
 export function permissionOutcome(
   params: any,
-  allowAllTools: boolean
+  mode: boolean | 'deny' | 'allow-once' | 'allow-always'
 ): { outcome: { outcome: 'cancelled' } } | { outcome: { outcome: 'selected'; optionId: string } } {
-  if (!allowAllTools) return { outcome: { outcome: 'cancelled' } };
+  const effectiveMode = typeof mode === 'boolean' ? (mode ? 'allow-always' : 'deny') : mode;
+  if (effectiveMode === 'deny') return { outcome: { outcome: 'cancelled' } };
   const options = Array.isArray(params?.options) ? params.options : [];
-  for (const kind of ['allow_always', 'allow_once']) {
+  const preferredKinds = effectiveMode === 'allow-always'
+    ? ['allow_always', 'allow_once']
+    : ['allow_once'];
+  for (const kind of preferredKinds) {
     const match = options.find(
       (option: any) => option?.kind === kind && typeof option.optionId === 'string' && option.optionId.length > 0
     );
@@ -160,13 +212,10 @@ export class CopilotAcpClient {
         args = envArgs.split(/\s+/);
       } else {
         args = ['--acp'];
-        if (this.config.allowAllTools !== false) {
+        if (this.config.allowAllTools === true) {
           args.push('--allow-all-tools');
         }
       }
-    }
-    if (this.config.model && !args.includes('--model')) {
-      args.push('--model', this.config.model);
     }
     return args;
   }
@@ -374,7 +423,8 @@ export class CopilotAcpClient {
     };
 
     if (method === 'session/request_permission') {
-      respondResult(permissionOutcome(params, this.config.allowAllTools !== false));
+      const permissionMode = this.config.permissionMode ?? 'allow-once';
+      respondResult(permissionOutcome(params, permissionMode));
       return;
     }
 
@@ -384,9 +434,19 @@ export class CopilotAcpClient {
         return;
       }
       try {
-        const filePath = resolveInsideCwd(this.sessionCwd, String(params?.path || ''));
+        const filePath = await resolveReadableInsideCwd(this.sessionCwd, String(params?.path || ''));
         const content = await readFile(filePath, 'utf8');
-        respondResult({ content });
+        const hasSlice = params?.line !== undefined || params?.limit !== undefined;
+        if (!hasSlice) {
+          respondResult({ content });
+        } else {
+          const startLine = Number.isInteger(params?.line) && params.line > 0 ? params.line : 1;
+          const limit = Number.isInteger(params?.limit) && params.limit >= 0 ? params.limit : undefined;
+          const lines = content.split(/\r?\n/);
+          const start = startLine - 1;
+          const selected = limit === undefined ? lines.slice(start) : lines.slice(start, start + limit);
+          respondResult({ content: selected.join('\n') });
+        }
       } catch (err: any) {
         respondError(-32602, `Failed to read file: ${err.message}`);
       }
@@ -399,7 +459,7 @@ export class CopilotAcpClient {
         return;
       }
       try {
-        const filePath = resolveInsideCwd(this.sessionCwd, String(params?.path || ''));
+        const filePath = await resolveWritableInsideCwd(this.sessionCwd, String(params?.path || ''));
         await mkdir(dirname(filePath), { recursive: true });
         await writeFile(filePath, String(params?.content || ''), 'utf8');
         respondResult(null);
@@ -434,9 +494,11 @@ export class CopilotAcpClient {
 
     return new Promise<T>((resolvePromise, rejectPromise) => {
       let timer: NodeJS.Timeout | null = null;
+      let abortHandler: (() => void) | null = null;
 
       const cleanup = () => {
         if (timer) clearTimeout(timer);
+        if (signal && abortHandler) signal.removeEventListener('abort', abortHandler);
         this.pendingRequests.delete(id);
       };
 
@@ -460,14 +522,11 @@ export class CopilotAcpClient {
           rejectPromise(new Error(`ACP request '${method}' was aborted.`));
           return;
         }
-        signal.addEventListener(
-          'abort',
-          () => {
-            cleanup();
-            rejectPromise(new Error(`ACP request '${method}' was aborted.`));
-          },
-          { once: true }
-        );
+        abortHandler = () => {
+          cleanup();
+          rejectPromise(new Error(`ACP request '${method}' was aborted.`));
+        };
+        signal.addEventListener('abort', abortHandler, { once: true });
       }
 
       this.pendingRequests.set(id, {
@@ -516,9 +575,9 @@ export class CopilotAcpClient {
       'initialize',
       {
         protocolVersion: 1,
-        clientCapabilities: {
-          fs: { readTextFile: true, writeTextFile: true },
-        },
+        clientCapabilities: this.config.allowFileRequests === false
+          ? {}
+          : { fs: { readTextFile: true, writeTextFile: true } },
         clientInfo: {
           name: 'deepseek-harness',
           title: 'DeepSeek Harness',
@@ -572,9 +631,7 @@ export class CopilotAcpClient {
     );
 
     if (modelOption) {
-      const allowed = (modelOption.options || [])
-        .map((o: any) => (typeof o === 'string' ? o : o.value))
-        .filter(Boolean);
+      const allowed = selectOptionValues(modelOption);
       if (allowed.length > 0 && !allowed.includes(requestedModel)) return false;
       await this.request('session/set_config_option', {
         sessionId,
@@ -649,21 +706,7 @@ export class CopilotAcpClient {
       await this.initialize(remaining(), signal);
       const session = await this.newSession(undefined, remaining(), signal);
       const discovered = this.extractModelsFromSession(session);
-      if (discovered.length > 0) {
-        return discovered;
-      }
-      // If Copilot session connected successfully but did not advertise model choices in configOptions,
-      // return Copilot supported models (2026 active models).
-      return [
-        'auto',
-        'gpt-5.6-luna',
-        'claude-sonnet-4.6',
-        'gpt-5.4',
-        'gemini-3.8-flash',
-        'o4-mini',
-        'mai-code-1.1-flash',
-        'gpt-6-luna',
-      ];
+      return discovered;
     } finally {
       this.close();
     }
@@ -675,13 +718,8 @@ export class CopilotAcpClient {
     if (session.configOptions && Array.isArray(session.configOptions)) {
       for (const opt of session.configOptions) {
         if (opt.id === 'model' || opt.category === 'model') {
-          for (const choice of opt.options || []) {
-            const val = typeof choice === 'string' ? choice : choice.value;
-            const disabled =
-              choice?._meta?.copilotEnablement === 'disabled' || choice?.enabled === false;
-            if (val && !disabled && !results.includes(val)) {
-              results.push(val);
-            }
+          for (const val of selectOptionValues(opt)) {
+            if (!results.includes(val)) results.push(val);
           }
         }
       }
@@ -720,7 +758,7 @@ export class CopilotAcpClient {
 
     const timer = setTimeout(() => {
       try {
-        if (proc.exitCode === null && !proc.killed) {
+        if (proc.exitCode === null) {
           proc.kill('SIGKILL');
         }
       } catch {

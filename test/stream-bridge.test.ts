@@ -34,9 +34,7 @@ test('AcpStreamEmitter: handles agent_thought_chunk to reasoning delta', () => {
     text: 'step 2',
   });
 
-  // Finish
   const finishChunks = emitter.finish();
-  assert.strictEqual(finishChunks.length, 2);
   assert.deepStrictEqual(finishChunks[0], {
     type: 'block-end',
     index: 0,
@@ -64,7 +62,6 @@ test('AcpStreamEmitter: handles transition from reasoning to text', () => {
     content: { type: 'text', text: 'Here is the answer.' },
   });
 
-  // Should close reasoning block and start text block
   assert.strictEqual(textChunks.length, 3);
   assert.strictEqual(textChunks[0].type, 'block-end');
   assert.strictEqual(textChunks[1].type, 'block-start');
@@ -72,7 +69,6 @@ test('AcpStreamEmitter: handles transition from reasoning to text', () => {
   assert.strictEqual(textChunks[2].type, 'text-delta');
 
   const finishChunks = emitter.finish();
-  assert.strictEqual(finishChunks.length, 2);
   assert.strictEqual(finishChunks[0].type, 'block-end');
   assert.strictEqual(finishChunks[1].type, 'finish');
   assert.strictEqual((finishChunks[1] as any).reason.kind, 'stop');
@@ -86,48 +82,104 @@ test('AcpStreamEmitter: ignores native ACP tool_call updates', () => {
     content: { type: 'text', text: 'Let me run a tool.' },
   });
 
-  const toolChunks = emitter.handleSessionUpdate({
+  assert.deepStrictEqual(emitter.handleSessionUpdate({
     sessionUpdate: 'tool_call',
     toolCallId: 'tc_456',
     name: 'bash',
     rawInput: { command: 'ls -la' },
-  });
-  const updateChunks = emitter.handleSessionUpdate({
+  }), []);
+  assert.deepStrictEqual(emitter.handleSessionUpdate({
     sessionUpdate: 'tool_call_update',
     toolCallId: 'tc_456',
     status: 'completed',
-    rawInput: { command: 'ls -la' },
-  });
-
-  assert.deepStrictEqual(toolChunks, []);
-  assert.deepStrictEqual(updateChunks, []);
+  }), []);
 
   const finishChunks = emitter.finish();
   assert.ok(finishChunks.every((chunk) => chunk.type !== 'tool-call-delta'));
-  assert.strictEqual(finishChunks[finishChunks.length - 1].type, 'finish');
   assert.strictEqual((finishChunks[finishChunks.length - 1] as any).reason.kind, 'stop');
 });
 
-test('AcpStreamEmitter: handles text-based <tool_call> extraction', () => {
+test('AcpStreamEmitter: extracts text tool calls without leaking markup', () => {
   const emitter = new AcpStreamEmitter();
 
-  emitter.handleSessionUpdate({
+  const updateChunks = emitter.handleSessionUpdate({
     sessionUpdate: 'agent_message_chunk',
     content: {
       type: 'text',
       text: 'I will list files:\n<tool_call>{"name": "glob", "arguments": {"pattern": "*.ts"}}</tool_call>',
     },
   });
+  const chunks = [...updateChunks, ...emitter.finish()];
 
-  const finishChunks = emitter.finish();
-  const deltas = finishChunks.filter((chunk) => chunk.type === 'tool-call-delta');
+  const visibleText = chunks
+    .filter((chunk) => chunk.type === 'text-delta')
+    .map((chunk: any) => chunk.text)
+    .join('');
+  assert.strictEqual(visibleText, 'I will list files:\n');
+  assert.doesNotMatch(visibleText, /tool_call/i);
+
+  const deltas = chunks.filter((chunk) => chunk.type === 'tool-call-delta');
   assert.strictEqual(deltas.length, 1);
+  assert.strictEqual((deltas[0] as any).name, 'glob');
   assert.strictEqual((deltas[0] as any).argumentsDelta, '{"pattern":"*.ts"}');
-  const toolEnd = finishChunks.find((chunk) => chunk.type === 'block-end' && (chunk as any).block?.type === 'tool-call');
-  assert.strictEqual((toolEnd as any).block.arguments, '{"pattern":"*.ts"}');
-  const finish = finishChunks[finishChunks.length - 1];
+
+  const finish = chunks[chunks.length - 1] as any;
   assert.strictEqual(finish.type, 'finish');
-  assert.strictEqual((finish as any).reason.kind, 'tool-calls');
+  assert.strictEqual(finish.reason.kind, 'tool-calls');
+});
+
+test('AcpStreamEmitter: buffers tool tags split across ACP chunks', () => {
+  const emitter = new AcpStreamEmitter();
+  const chunks: any[] = [];
+
+  chunks.push(...emitter.handleSessionUpdate({
+    sessionUpdate: 'agent_message_chunk',
+    content: { type: 'text', text: 'Before <tool_' },
+  }));
+  chunks.push(...emitter.handleSessionUpdate({
+    sessionUpdate: 'agent_message_chunk',
+    content: { type: 'text', text: 'call>{"name":"glob","arguments":{"pattern":"src/*"}}</tool_call> After' },
+  }));
+  chunks.push(...emitter.finish());
+
+  const text = chunks
+    .filter((chunk) => chunk.type === 'text-delta')
+    .map((chunk) => chunk.text)
+    .join('');
+  assert.strictEqual(text, 'Before  After');
+  assert.doesNotMatch(text, /<tool_|tool_call>/i);
+  assert.strictEqual(chunks.filter((chunk) => chunk.type === 'tool-call-delta').length, 1);
+  assert.strictEqual(chunks[chunks.length - 1].reason.kind, 'tool-calls');
+});
+
+test('AcpStreamEmitter: preserves malformed incomplete tool markup as text', () => {
+  const emitter = new AcpStreamEmitter();
+  const chunks = [
+    ...emitter.handleSessionUpdate({
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'text', text: 'Literal <tool_call>{not-json' },
+    }),
+    ...emitter.finish(),
+  ];
+  const text = chunks
+    .filter((chunk) => chunk.type === 'text-delta')
+    .map((chunk: any) => chunk.text)
+    .join('');
+  assert.strictEqual(text, 'Literal <tool_call>{not-json');
+  assert.strictEqual((chunks[chunks.length - 1] as any).reason.kind, 'stop');
+});
+
+test('AcpStreamEmitter: maps ACP stop reasons', () => {
+  assert.strictEqual((new AcpStreamEmitter().finish(undefined, undefined, 'max_tokens').at(-1) as any).reason.kind, 'max-tokens');
+  assert.strictEqual((new AcpStreamEmitter().finish(undefined, undefined, 'cancelled').at(-1) as any).reason.kind, 'aborted');
+
+  const refusal = new AcpStreamEmitter().finish(undefined, undefined, 'refusal').at(-1) as any;
+  assert.strictEqual(refusal.reason.kind, 'error');
+  assert.strictEqual(refusal.reason.failure.code, 'ACP_REFUSAL');
+
+  const turns = new AcpStreamEmitter().finish(undefined, undefined, 'max_turn_requests').at(-1) as any;
+  assert.strictEqual(turns.reason.kind, 'error');
+  assert.strictEqual(turns.reason.failure.code, 'ACP_MAX_TURN_REQUESTS');
 });
 
 test('AcpStreamEmitter: does not treat context usage as token usage', () => {

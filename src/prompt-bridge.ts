@@ -3,9 +3,7 @@ import type { DshMessage, DshToolDeclaration, GenerateOptions } from './types.js
 
 const PROMPT_PREAMBLE = [
   'You are being used as the active ACP agent backend for DeepSeek Harness.',
-  'Use ACP capabilities to complete tasks.',
-  'IMPORTANT: If you take an action with a tool, you MUST output tool calls using <tool_call>{"name": "...", "arguments": {...}}</tool_call> blocks with JSON matching standard tool call format.',
-  'If no tool is needed, answer normally.',
+  'Use the conversation context to complete the user request.',
 ];
 
 const ROLE_LABELS: Record<string, string> = {
@@ -93,6 +91,12 @@ export function formatMessagesAsPrompt(options: GenerateOptions): string {
 
   if (options.system && options.system.trim()) {
     sections.push(`System Instructions:\n${options.system.trim()}`);
+  }
+
+  if (options.tools && options.tools.length > 0) {
+    sections.push(
+      'DeepSeek Harness owns execution of the tools listed below. Do not execute an equivalent Copilot-native tool for the same action. Instead, request the DSH tool by emitting exactly <tool_call>{"name":"...","arguments":{...}}</tool_call>. Do not wrap the block in Markdown.'
+    );
   }
 
   const toolSections = renderToolBridge(options.tools);

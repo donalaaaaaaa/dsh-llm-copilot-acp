@@ -5,8 +5,7 @@
         command: copilot
         args:
           - --acp
-          - --allow-all-tools
         timeoutMs: 900000
         modelDiscoveryTimeoutMs: 15000
-        allowAllTools: true
+        allowAllTools: false
         allowFileRequests: true

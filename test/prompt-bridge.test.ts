@@ -93,6 +93,23 @@ test('formatMessagesAsPrompt: formats full conversation into ACP prompt', () => 
   assert.ok(prompt.includes('Continue the conversation from the latest user request.'));
 });
 
+test('formatMessagesAsPrompt: declares DSH tool ownership when tools are available', () => {
+  const prompt = formatMessagesAsPrompt({
+    provider: 'github-copilot-acp',
+    model: 'gpt-4o',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'Inspect src' }] }],
+    tools: [{
+      name: 'glob',
+      description: 'Find files',
+      parameters: { type: 'object', properties: { pattern: { type: 'string' } } },
+    }],
+  });
+
+  assert.match(prompt, /DeepSeek Harness owns execution/);
+  assert.match(prompt, /<tool_call>/);
+  assert.match(prompt, /"name": "glob"/);
+});
+
 test('extractToolCallsFromText: extracts <tool_call> and cleans text', () => {
   const text =
     'I will now check the file.\n' +

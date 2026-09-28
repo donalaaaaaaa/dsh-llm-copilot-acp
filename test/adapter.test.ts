@@ -72,6 +72,25 @@ test('CopilotAcpAdapter: stream normal completion chunks', async () => {
   assert.strictEqual(finish.reason.kind, 'stop');
 });
 
+test('CopilotAcpAdapter: preserves ACP prompt stop reasons', async () => {
+  const adapter = new CopilotAcpAdapter({
+    command: nodeBin,
+    args: ['--experimental-strip-types', mockCliPath],
+    cwd: process.cwd(),
+    timeoutMs: 5000,
+  });
+
+  const chunks: any[] = [];
+  for await (const chunk of adapter.stream({
+    provider: 'github-copilot-acp',
+    model: 'gpt-4o',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'trigger_max_tokens' }] }],
+  })) chunks.push(chunk);
+
+  assert.strictEqual(chunks.at(-1).type, 'finish');
+  assert.strictEqual(chunks.at(-1).reason.kind, 'max-tokens');
+});
+
 test('CopilotAcpAdapter: native tool events are not executable, text tool calls are', async () => {
   const adapter = new CopilotAcpAdapter({
     command: nodeBin,

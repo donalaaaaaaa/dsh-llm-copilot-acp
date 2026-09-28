@@ -10,6 +10,12 @@ function send(msg: any) {
 }
 
 let pendingResponses = new Map<number, (val: any) => void>();
+const noModels = process.argv.includes('--no-models');
+const groupedModels = process.argv.includes('--grouped-models');
+
+function finishPrompt(id: number, stopReason = 'end_turn') {
+  send({ jsonrpc: '2.0', id, result: { stopReason } });
+}
 
 rl.on('line', async (line) => {
   const trimmed = line.trim();
@@ -54,6 +60,7 @@ rl.on('line', async (line) => {
           protocolVersion: 1,
           capabilities: { models: true },
           echoedPermission: permission?.result ?? null,
+          echoedCapabilities: params?.clientCapabilities ?? null,
         },
       });
       return;
@@ -65,17 +72,39 @@ rl.on('line', async (line) => {
         id,
         result: {
           sessionId: 'sess_mock_001',
-          configOptions: [
-            {
-              id: 'model',
-              category: 'model',
-              options: [
-                { value: 'gpt-4o' },
-                { value: 'claude-3.5-sonnet' },
-                { value: 'o1-preview' },
+          configOptions: noModels
+            ? []
+            : [
+                {
+                  id: 'model',
+                  type: 'select',
+                  category: 'model',
+                  currentValue: 'gpt-4o',
+                  options: groupedModels
+                    ? [
+                        {
+                          group: 'openai',
+                          name: 'OpenAI',
+                          options: [
+                            { value: 'gpt-4o', name: 'GPT-4o' },
+                            { value: 'o1-preview', name: 'o1-preview' },
+                          ],
+                        },
+                        {
+                          group: 'anthropic',
+                          name: 'Anthropic',
+                          options: [
+                            { value: 'claude-3.5-sonnet', name: 'Claude 3.5 Sonnet' },
+                          ],
+                        },
+                      ]
+                    : [
+                        { value: 'gpt-4o', name: 'GPT-4o' },
+                        { value: 'claude-3.5-sonnet', name: 'Claude 3.5 Sonnet' },
+                        { value: 'o1-preview', name: 'o1-preview' },
+                      ],
+                },
               ],
-            },
-          ],
         },
       });
       return;
@@ -92,6 +121,42 @@ rl.on('line', async (line) => {
 
     if (method === 'session/prompt') {
       const promptText = params?.prompt?.[0]?.text || '';
+
+      if (promptText.includes('trigger_max_tokens')) {
+        finishPrompt(id, 'max_tokens');
+        return;
+      }
+
+      if (promptText.includes('trigger_refusal')) {
+        finishPrompt(id, 'refusal');
+        return;
+      }
+
+      if (promptText.includes('trigger_read_slice')) {
+        const reqId = 7777;
+        const readPromise = new Promise((resolve) => {
+          pendingResponses.set(reqId, resolve);
+        });
+        send({
+          jsonrpc: '2.0',
+          id: reqId,
+          method: 'fs/read_text_file',
+          params: { path: 'test_read.txt', line: 2, limit: 1 },
+        });
+        const res: any = await readPromise;
+        send({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: `Slice: ${res?.result?.content ?? '(empty)'}` },
+            },
+          },
+        });
+        finishPrompt(id);
+        return;
+      }
 
       if (promptText.includes('trigger_read_file')) {
         // Send a request to client to read a file
@@ -121,7 +186,7 @@ rl.on('line', async (line) => {
           },
         });
 
-        send({ jsonrpc: '2.0', id, result: {} });
+        finishPrompt(id);
         return;
       }
 
@@ -134,7 +199,7 @@ rl.on('line', async (line) => {
           jsonrpc: '2.0',
           id: reqId,
           method: 'fs/read_text_file',
-          params: { path: 'D:\\outside-copilot-acp\\secret.txt' },
+          params: { path: '../outside-copilot-acp/secret.txt' },
         });
         const res: any = await readPromise;
         const text = res?.error ? `READ_DENIED ${res.error.message}` : 'READ_ALLOWED';
@@ -148,7 +213,7 @@ rl.on('line', async (line) => {
             },
           },
         });
-        send({ jsonrpc: '2.0', id, result: {} });
+        finishPrompt(id);
         return;
       }
 
@@ -166,7 +231,7 @@ rl.on('line', async (line) => {
             },
           },
         });
-        send({ jsonrpc: '2.0', id, result: {} });
+        finishPrompt(id);
         return;
       }
 
@@ -207,7 +272,7 @@ rl.on('line', async (line) => {
           },
         });
 
-        send({ jsonrpc: '2.0', id, result: {} });
+        finishPrompt(id);
         return;
       }
 
@@ -246,11 +311,7 @@ rl.on('line', async (line) => {
         },
       });
 
-      send({
-        jsonrpc: '2.0',
-        id,
-        result: {},
-      });
+      finishPrompt(id);
       return;
     }
 

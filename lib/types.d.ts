@@ -12,11 +12,13 @@ export interface CopilotAcpConfig {
     timeoutMs?: number;
     /** Timeout for model discovery in milliseconds (defaults to 10,000) */
     modelDiscoveryTimeoutMs?: number;
-    /** Pass --allow-all-tools or permit tool operations (defaults to true) */
+    /** Pass --allow-all-tools to the Copilot CLI when args are not explicitly configured. */
     allowAllTools?: boolean;
+    /** How ACP permission requests are answered. Defaults to "allow-once". */
+    permissionMode?: 'deny' | 'allow-once' | 'allow-always';
     /** Whether to allow local fs reads/writes requested by Copilot (defaults to true) */
     allowFileRequests?: boolean;
-    /** Specific model to pass to Copilot CLI (e.g. via --model) */
+    /** @deprecated Model selection is session-scoped; retained only for config compatibility. */
     model?: string;
     /** Custom configured models list */
     models?: Array<{

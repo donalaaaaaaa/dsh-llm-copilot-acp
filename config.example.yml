@@ -2,63 +2,67 @@
 # DeepSeek Harness Desktop - GitHub Copilot CLI ACP Provider Configuration
 # ==============================================================================
 #
-# 该配置可直接添加到 C:\Users\<Username>\.dsh\profiles\desktop\cordis.patch.yml
-# 或者作为独立的 Cordis 插件配置使用。
+# Add this block to:
+# C:\Users\<Username>\.dsh\profiles\desktop\cordis.patch.yml
 #
-# 前置条件：
-# 1. 安装官方 GitHub Copilot CLI:
-#    npm install -g @github/copilot
-# 2. 提前登录授权（只需在终端执行一次）：
-#    copilot login
-# 3. 验证 CLI 支持 ACP 协议：
-#    copilot --help | findstr acp
+# Prerequisites:
+# 1. npm install -g @github/copilot
+# 2. copilot login
+# 3. copilot --help | findstr acp
 # ==============================================================================
 
-# 1. 注册并配置 github-copilot-acp 插件
 - id: github-copilot-acp
   name: "@deepseek-ai/dsh-llm-copilot-acp"
   config:
-    # Copilot CLI 可执行命令或路径
-    # 默认值: copilot（或读取环境变量 COPILOT_ACP_COMMAND / COPILOT_CLI_PATH）
+    # Copilot CLI executable or absolute path.
     command: copilot
 
-    # 启动命令行参数，默认包含 --acp 与 --allow-all-tools
-    # 可通过环境变量 COPILOT_ACP_ARGS 覆盖
+    # Safe default: start only the ACP server.
+    # Add --allow-all-tools explicitly only if you really want Copilot-native
+    # tools to run without per-operation permission.
     args:
       - "--acp"
-      - "--allow-all-tools"
 
-    # 操作超时时间 (毫秒)，默认 15 分钟
     timeoutMs: 900000
-
-    # 是否允许 Copilot 在会话目录内通过 ACP 文件桥读写
-    allowFileRequests: true
-
-    # 模型发现超时（毫秒）。发现失败时目录为空，不会填入猜出来的模型名。
     modelDiscoveryTimeoutMs: 10000
 
-    # 可选：只有确认 Copilot 会话会提供这些 id 时才手写 models。
-    # 写了之后就不再向 CLI 发现，错误 id 不会被自动替换。
+    # Kept for direct-constructor compatibility. With explicit args above this
+    # flag does not append anything. Recommended default is false.
+    allowAllTools: false
+
+    # Optional ACP permission policy:
+    #   deny | allow-once | allow-always
+    #
+    # Recommended: omit it. The adapter then defaults to:
+    #   - deny when DSH tools are supplied, to reduce duplicate side effects
+    #   - allow-once otherwise
+    # permissionMode: allow-once
+
+    # Allow ACP fs/read_text_file and fs/write_text_file inside the canonical
+    # session cwd. Symlink/junction escapes are rejected.
+    allowFileRequests: true
+
+    # Optional explicit model catalog. Normally omit this and let the ACP
+    # session advertise the account's actual model choices.
     # models:
-    #   - id: gpt-5.4
-    #     name: GPT-5.4
+    #   - id: "<advertised-model-id>"
+    #     name: "<display-name>"
     #     inputModalities:
     #       - text
 
-# 2. （可选）将 github-copilot-acp 设为默认 Agent 模型
+# Optional: configure a DSH default model only after model discovery shows the
+# exact model id available to this Copilot account.
 # - id: agent-default-model
 #   name: "@deepseek-ai/dsh-agent-default-model"
 #   config:
 #     provider: github-copilot-acp
-#     model: gpt-4o
+#     model: "<advertised-model-id>"
 
-# 3. （可选）在子智能体选择列表允许使用 github-copilot-acp 模型
+# Optional: same rule for subagents: use ids actually returned by discovery.
 # - id: subagent-model-selection-settings
 #   name: "@deepseek-ai/dsh-tool-subagent/model-selection-settings"
 #   config:
 #     enabled: true
 #     allowedModels:
 #       - provider: github-copilot-acp
-#         model: gpt-4o
-#       - provider: github-copilot-acp
-#         model: claude-3.5-sonnet
+#         model: "<advertised-model-id>"

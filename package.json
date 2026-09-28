@@ -20,7 +20,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "node --test test/**/*.test.js test/**/*.test.ts"
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "check": "pnpm build && pnpm test"
   },
   "keywords": [
     "deepseek-harness",
@@ -31,6 +32,7 @@
   "author": "DeepSeek Harness Community",
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "^26.6.2"
+    "@types/node": "^26.6.2",
+    "typescript": "5.8.3"
   }
 }
