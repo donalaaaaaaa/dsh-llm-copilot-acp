@@ -212,7 +212,7 @@ export class CopilotAcpClient {
         args = envArgs.split(/\s+/);
       } else {
         args = ['--acp'];
-        if (this.config.allowAllTools !== false) {
+        if (this.config.allowAllTools === true) {
           args.push('--allow-all-tools');
         }
       }
