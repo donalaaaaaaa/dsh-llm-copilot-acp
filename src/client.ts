@@ -494,9 +494,11 @@ export class CopilotAcpClient {
 
     return new Promise<T>((resolvePromise, rejectPromise) => {
       let timer: NodeJS.Timeout | null = null;
+      let abortHandler: (() => void) | null = null;
 
       const cleanup = () => {
         if (timer) clearTimeout(timer);
+        if (signal && abortHandler) signal.removeEventListener('abort', abortHandler);
         this.pendingRequests.delete(id);
       };
 
@@ -520,14 +522,11 @@ export class CopilotAcpClient {
           rejectPromise(new Error(`ACP request '${method}' was aborted.`));
           return;
         }
-        signal.addEventListener(
-          'abort',
-          () => {
-            cleanup();
-            rejectPromise(new Error(`ACP request '${method}' was aborted.`));
-          },
-          { once: true }
-        );
+        abortHandler = () => {
+          cleanup();
+          rejectPromise(new Error(`ACP request '${method}' was aborted.`));
+        };
+        signal.addEventListener('abort', abortHandler, { once: true });
       }
 
       this.pendingRequests.set(id, {
